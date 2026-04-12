@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+from .gui import JkcheeseGui
+from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Jkcheese helper")
+    parser.add_argument("--root", type=Path, default=Path(r"C:\leidian\LDPlayer9"))
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    inspect = subparsers.add_parser("inspect", help="Show instance and game status")
+    inspect.add_argument("--index", type=int, default=0)
+    inspect.add_argument("--probe-package-path", action="store_true")
+
+    launch = subparsers.add_parser("launch", help="Launch an instance")
+    launch.add_argument("--index", type=int, default=0)
+
+    run_game = subparsers.add_parser("run-game", help="Launch Golden Spatula")
+    run_game.add_argument("--index", type=int, default=0)
+    run_game.add_argument("--launch-if-needed", action="store_true")
+
+    screenshot = subparsers.add_parser("screenshot", help="Capture a screenshot")
+    screenshot.add_argument("--index", type=int, default=0)
+    screenshot.add_argument("--output", type=Path, default=Path("captures") / "latest.png")
+    screenshot.add_argument("--launch-if-needed", action="store_true")
+
+    return parser
+
+
+def run_cli(args: argparse.Namespace) -> int:
+    client = LDPlayerClient(args.root)
+
+    if args.command == "inspect":
+        instance = client.get_instance(args.index)
+        print(f"LDPlayer root: {client.root}")
+        print(f"Instance: [{instance.index}] {instance.name}")
+        print(f"Resolution: {instance.width}x{instance.height} @ {instance.dpi}dpi")
+        print(f"Emulator running: {'yes' if instance.running else 'no'}")
+        print(f"Game installed: {'yes' if instance.has_game else 'no'}")
+        if instance.has_game:
+            game = instance.game
+            assert game is not None
+            print(f"Game label: {game.app_name or GAME_PACKAGE}")
+            print(f"Game version: {game.version or '-'}")
+        if instance.running and instance.has_game:
+            print(f"Game process: {'running' if client.is_package_running(instance.index) else 'not running'}")
+            if args.probe_package_path:
+                print(f"APK path: {client.resolve_package_path(instance.index) or '-'}")
+        return 0
+
+    if args.command == "launch":
+        client.launch(args.index)
+        print(f"Launch command sent to instance {args.index}.")
+        return 0
+
+    if args.command == "run-game":
+        if not client.is_running(args.index):
+            if not args.launch_if_needed:
+                raise LDPlayerError(
+                    f"Instance {args.index} is not running. Use launch first or add --launch-if-needed."
+                )
+            client.launch(args.index)
+            client.wait_for_running(args.index)
+        client.wait_for_boot(args.index)
+        client.run_app(args.index, GAME_PACKAGE)
+        print(f"Game launch command sent to instance {args.index}.")
+        return 0
+
+    if args.command == "screenshot":
+        output = args.output if args.output.is_absolute() else Path.cwd() / args.output
+        if output.name == "latest.png":
+            output = output.parent / f"jkcheese_{time.strftime('%Y%m%d_%H%M%S')}.png"
+        saved = client.capture_screenshot(args.index, output, launch_if_needed=args.launch_if_needed)
+        print(f"Screenshot saved to: {saved}")
+        return 0
+
+    gui = JkcheeseGui()
+    gui.run()
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return run_cli(args)
+    except LDPlayerError as exc:
+        print(f"Error: {exc}")
+        return 1
+    except KeyboardInterrupt:
+        print("Interrupted")
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
