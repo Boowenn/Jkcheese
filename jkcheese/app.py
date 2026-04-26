@@ -8,6 +8,7 @@ from pathlib import Path
 from .advice import AdviceReport, build_advice
 from .card_tracker import (
     DEFAULT_CARD_STATE_PATH,
+    DEFAULT_POOL_SIZES,
     CardTrackerError,
     CoreAdviceReport,
     build_core_advice,
@@ -119,6 +120,11 @@ def _add_core_advice_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--mode", choices=("add", "replace"), default="add")
     parser.add_argument("--reset", action="store_true", help="Start a fresh tracker before applying --owned")
     parser.add_argument("--focus-costs", nargs="+", type=int, default=[4, 5], help="Card costs to monitor closely")
+    parser.add_argument(
+        "--pool-sizes",
+        default=",".join(f"{cost}:{size}" for cost, size in DEFAULT_POOL_SIZES.items()),
+        help="Per-cost public pool sizes, for example 1:30,2:25,3:18,4:10,5:9",
+    )
     parser.add_argument("--limit", type=int, default=5)
 
 
@@ -162,6 +168,26 @@ def _print_lineup_recommendations(recommendations: tuple[LineupRecommendation, .
 
 def _print_core_advice(report: CoreAdviceReport) -> None:
     print(format_core_advice(report))
+
+
+def _parse_pool_sizes(value: str) -> dict[int, int]:
+    pool_sizes = dict(DEFAULT_POOL_SIZES)
+    for chunk in value.split(","):
+        part = chunk.strip()
+        if not part:
+            continue
+        if ":" not in part:
+            raise CardTrackerError(f"Pool size entry must use cost:size, got {part!r}.")
+        cost_text, size_text = part.split(":", 1)
+        try:
+            cost = int(cost_text)
+            size = int(size_text)
+        except ValueError as exc:
+            raise CardTrackerError(f"Pool size entry must be numeric, got {part!r}.") from exc
+        if cost not in range(1, 6) or size <= 0:
+            raise CardTrackerError(f"Pool size entry out of range, got {part!r}.")
+        pool_sizes[cost] = size
+    return pool_sizes
 
 
 def _export_debug_if_requested(image_path: Path, debug_output: Path | None) -> None:
@@ -225,6 +251,7 @@ def run_cli(args: argparse.Namespace) -> int:
             reset=args.reset,
             limit=args.limit,
             focus_costs=tuple(args.focus_costs),
+            pool_sizes=_parse_pool_sizes(args.pool_sizes),
         )
         _print_core_advice(report)
         return 0
@@ -332,6 +359,7 @@ def run_cli(args: argparse.Namespace) -> int:
             reset=args.reset,
             limit=args.limit,
             focus_costs=tuple(args.focus_costs),
+            pool_sizes=_parse_pool_sizes(args.pool_sizes),
         )
         print(f"Screenshot saved to: {saved}")
         _print_core_advice(report)

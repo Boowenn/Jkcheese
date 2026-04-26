@@ -126,6 +126,7 @@ class JkcheeseGui:
         hint = (
             "Live tokens rank S lineups. Owned copies drive cost-aware star warnings, "
             "e.g. 4费Vexx7, 五费Nami=3, or Vex@4x7. Focus is 4/5-cost units."
+            " Default pools: 1=30, 2=25, 3=18, 4=10, 5=9."
         )
         ttk.Label(core, text=hint).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
 

@@ -11,6 +11,7 @@ from .lineups import Lineup, LineupRecommendation, recommend_lineups
 
 
 DEFAULT_CARD_STATE_PATH = Path("captures") / "card_state.json"
+DEFAULT_POOL_SIZES = {1: 30, 2: 25, 3: 18, 4: 10, 5: 9}
 TOKEN_SPLIT_RE = re.compile(r"[\s,，、/|;；]+")
 COUNT_SUFFIX_RE = re.compile(r"^(?P<name>.+?)(?:[xX*×=])(?P<count>\d+)$")
 COST_PREFIX_RE = re.compile(r"^(?P<cost>[1-5一二三四五])费(?P<name>.+)$")
@@ -45,6 +46,7 @@ class UpgradeWarning:
     token: str
     count: int
     cost: int | None
+    pool_size: int | None
     severity: str
     title: str
     detail: str
@@ -59,6 +61,7 @@ class CoreAdviceReport:
     owned_updates: tuple[ParsedTokenCount, ...]
     recommendation_tokens: tuple[str, ...]
     focus_costs: tuple[int, ...]
+    pool_sizes: dict[int, int]
     warnings: tuple[UpgradeWarning, ...]
     recommendations: tuple[LineupRecommendation, ...]
 
@@ -195,11 +198,20 @@ def build_upgrade_warnings(
     state: CardTrackerState,
     lineups: tuple[Lineup, ...] = (),
     focus_costs: tuple[int, ...] = DEFAULT_FOCUS_COSTS,
+    pool_sizes: dict[int, int] | None = None,
 ) -> tuple[UpgradeWarning, ...]:
+    resolved_pool_sizes = _normalize_pool_sizes(pool_sizes)
     warnings: list[UpgradeWarning] = []
     for token, count in sorted(state.counts.items(), key=lambda item: (-item[1], item[0])):
         cost = state.costs.get(token)
-        warning = _warning_for_count(token, count, cost, _matching_lineup_names(token, lineups), focus_costs)
+        warning = _warning_for_count(
+            token,
+            count,
+            cost,
+            _matching_lineup_names(token, lineups),
+            focus_costs,
+            resolved_pool_sizes,
+        )
         if warning is not None:
             warnings.append(warning)
     return tuple(warnings)
@@ -215,7 +227,9 @@ def build_core_advice(
     reset: bool = False,
     limit: int = 5,
     focus_costs: tuple[int, ...] = DEFAULT_FOCUS_COSTS,
+    pool_sizes: dict[int, int] | None = None,
 ) -> CoreAdviceReport:
+    resolved_pool_sizes = _normalize_pool_sizes(pool_sizes)
     state = CardTrackerState(updated_at=_now()) if reset else load_card_state(state_path)
     owned_updates = apply_owned_counts(state, owned, mode=mode)
     if reset and not owned_updates:
@@ -225,7 +239,7 @@ def build_core_advice(
     seen_tokens = normalize_tokens(seen)
     recommendation_tokens = _unique((*seen_tokens, *state.counts.keys()))
     recommendations = recommend_lineups(lineups, recommendation_tokens, limit=limit) if lineups else ()
-    warnings = build_upgrade_warnings(state, lineups, focus_costs=focus_costs)
+    warnings = build_upgrade_warnings(state, lineups, focus_costs=focus_costs, pool_sizes=resolved_pool_sizes)
 
     return CoreAdviceReport(
         state=state,
@@ -234,6 +248,7 @@ def build_core_advice(
         owned_updates=owned_updates,
         recommendation_tokens=recommendation_tokens,
         focus_costs=focus_costs,
+        pool_sizes=resolved_pool_sizes,
         warnings=warnings,
         recommendations=recommendations,
     )
@@ -247,6 +262,7 @@ def format_core_advice(report: CoreAdviceReport) -> str:
         updates = ", ".join(f"{_display_token(item.token, item.cost)}+{item.count}" for item in report.owned_updates)
         lines.append("Owned update: " + updates)
     lines.append("Focus costs: " + ", ".join(f"{cost}-cost" for cost in report.focus_costs))
+    lines.append("Pool sizes: " + _format_pool_sizes(report.pool_sizes))
 
     if report.state.counts:
         counts = ", ".join(
@@ -262,7 +278,8 @@ def format_core_advice(report: CoreAdviceReport) -> str:
     if report.warnings:
         for warning in report.warnings:
             related = f" | S line: {', '.join(warning.matched_lineups)}" if warning.matched_lineups else ""
-            lines.append(f"- [{warning.severity}] {warning.title}: {warning.detail}{related}")
+            pool = f" | pool: {warning.count}/{warning.pool_size}" if warning.pool_size is not None else ""
+            lines.append(f"- [{warning.severity}] {warning.title}: {warning.detail}{pool}{related}")
     else:
         lines.append("- No focused 4/5-cost pair or three-star warning yet.")
 
@@ -286,10 +303,17 @@ def _warning_for_count(
     cost: int | None,
     matched_lineups: tuple[str, ...],
     focus_costs: tuple[int, ...],
+    pool_sizes: dict[int, int],
 ) -> UpgradeWarning | None:
     related = " This token appears in a current S-tier lineup." if matched_lineups else ""
     cost_label = f"{cost}-cost " if cost is not None else ""
     display = f"{cost_label}{token}"
+    pool_size = pool_sizes.get(cost) if cost is not None else None
+    pool_note = ""
+    if pool_size is not None:
+        remaining_self = max(0, 9 - count)
+        remaining_pool = max(0, pool_size - count)
+        pool_note = f" Public pool for a {cost}-cost unit is about {pool_size}; you hold {count}, need {remaining_self} for 3-star, and at most {remaining_pool} are untracked."
 
     if cost is not None and cost not in focus_costs and count < 9:
         return None
@@ -299,9 +323,10 @@ def _warning_for_count(
             token=token,
             count=count,
             cost=cost,
+            pool_size=pool_size,
             severity="complete",
             title=f"{display} three-star complete",
-            detail=f"{count}/9 copies tracked. Stop chasing extra copies and protect economy/positioning.{related}",
+            detail=f"{count}/9 copies tracked. Stop chasing extra copies and protect economy/positioning.{pool_note}{related}",
             matched_lineups=matched_lineups,
         )
     if count == 8:
@@ -309,9 +334,10 @@ def _warning_for_count(
             token=token,
             count=count,
             cost=cost,
+            pool_size=pool_size,
             severity="critical",
             title=f"{display} one copy from three-star",
-            detail=f"{count}/9 copies tracked. Buy/hold this immediately if it is part of your S-line plan.{related}",
+            detail=f"{count}/9 copies tracked. Buy/hold this immediately if it is part of your S-line plan.{pool_note}{related}",
             matched_lineups=matched_lineups,
         )
     if count == 7:
@@ -319,9 +345,10 @@ def _warning_for_count(
             token=token,
             count=count,
             cost=cost,
+            pool_size=pool_size,
             severity="critical" if cost in {4, 5} else "high",
             title=f"{display} two copies from three-star",
-            detail=f"{count}/9 copies tracked. Protect bench space, scout duplicates, and plan reroll timing.{related}",
+            detail=f"{count}/9 copies tracked. Protect bench space, scout duplicates, and plan reroll timing.{pool_note}{related}",
             matched_lineups=matched_lineups,
         )
     if count == 6:
@@ -329,9 +356,10 @@ def _warning_for_count(
             token=token,
             count=count,
             cost=cost,
+            pool_size=pool_size,
             severity="high" if cost in {4, 5} else "medium",
             title=f"{display} three-star setup",
-            detail=f"{count}/9 copies tracked. For 4/5-cost carries, start deciding whether the chase is worth economy and HP.{related}",
+            detail=f"{count}/9 copies tracked. For 4/5-cost carries, start deciding whether the chase is worth economy and HP.{pool_note}{related}",
             matched_lineups=matched_lineups,
         )
     if count in {4, 5} and cost in {4, 5}:
@@ -339,9 +367,10 @@ def _warning_for_count(
             token=token,
             count=count,
             cost=cost,
+            pool_size=pool_size,
             severity="high" if cost == 5 else "medium",
             title=f"{display} expensive three-star angle",
-            detail=f"{count}/9 copies tracked. This is early but valuable for 4/5-cost monitoring; hold if bench/economy allow.{related}",
+            detail=f"{count}/9 copies tracked. This is early but valuable for 4/5-cost monitoring; hold if bench/economy allow.{pool_note}{related}",
             matched_lineups=matched_lineups,
         )
     if count == 3:
@@ -349,9 +378,10 @@ def _warning_for_count(
             token=token,
             count=count,
             cost=cost,
+            pool_size=pool_size,
             severity="high" if cost == 5 else "medium",
             title=f"{display} two-star ready",
-            detail=f"{count}/9 copies tracked. Upgrade first, then decide whether a 4/5-cost three-star chase is realistic.{related}",
+            detail=f"{count}/9 copies tracked. Upgrade first, then decide whether a 4/5-cost three-star chase is realistic.{pool_note}{related}",
             matched_lineups=matched_lineups,
         )
     if count == 2 and cost in {4, 5}:
@@ -359,9 +389,10 @@ def _warning_for_count(
             token=token,
             count=count,
             cost=cost,
+            pool_size=pool_size,
             severity="medium" if cost == 5 else "info",
             title=f"{display} expensive pair",
-            detail=f"{count}/9 copies tracked. Watch shops closely; high-cost pairs are the start of real win-condition pivots.{related}",
+            detail=f"{count}/9 copies tracked. Watch shops closely; high-cost pairs are the start of real win-condition pivots.{pool_note}{related}",
             matched_lineups=matched_lineups,
         )
     return None
@@ -406,8 +437,21 @@ def _parse_cost(value: str) -> int | None:
     return cost if cost in range(1, 6) else None
 
 
+def _normalize_pool_sizes(pool_sizes: dict[int, int] | None) -> dict[int, int]:
+    resolved = dict(DEFAULT_POOL_SIZES)
+    if pool_sizes:
+        for cost, pool_size in pool_sizes.items():
+            if int(cost) in range(1, 6) and int(pool_size) > 0:
+                resolved[int(cost)] = int(pool_size)
+    return resolved
+
+
 def _display_token(token: str, cost: int | None) -> str:
     return f"{token}({cost}费)" if cost is not None else f"{token}(费用未知)"
+
+
+def _format_pool_sizes(pool_sizes: dict[int, int]) -> str:
+    return ", ".join(f"{cost}-cost={pool_sizes[cost]}" for cost in sorted(pool_sizes))
 
 
 def _sorted_counts(counts: dict[str, int]) -> tuple[tuple[str, int], ...]:

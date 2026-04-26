@@ -49,7 +49,18 @@ def test_upgrade_warnings_include_s_lineup_context():
 
     assert warnings[0].severity == "critical"
     assert warnings[0].cost == 4
+    assert warnings[0].pool_size == 10
     assert warnings[0].matched_lineups == ("Mecha Vex",)
+
+
+def test_pool_sizes_can_be_overridden_for_season_variants():
+    warnings = build_upgrade_warnings(
+        CardTrackerState(counts={"Vex": 7}, costs={"Vex": 4}),
+        pool_sizes={4: 12},
+    )
+
+    assert warnings[0].pool_size == 12
+    assert "about 12" in warnings[0].detail
 
 
 def test_low_cost_warnings_are_suppressed_before_completion_by_default():
@@ -75,6 +86,7 @@ def test_build_core_advice_persists_state_and_ranks_lineups(tmp_path):
 
     assert report.state.counts == {"Vex": 7}
     assert report.state.costs == {"Vex": 4}
+    assert report.pool_sizes == {1: 30, 2: 25, 3: 18, 4: 10, 5: 9}
     assert report.recommendations[0].lineup.name == "Mecha Vex"
     assert report.warnings[0].severity == "critical"
     assert json.loads(state_path.read_text(encoding="utf-8"))["counts"] == {"Vex": 7}

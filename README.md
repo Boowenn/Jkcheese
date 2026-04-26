@@ -110,6 +110,12 @@ python main.py core-advice --seen 机甲 --owned 4费薇古丝x1
 
 The card tracker understands cost-aware forms such as `4费薇古丝x7`, `五费安妮=3`, `4费 薇古丝x7`, and `薇古丝@4x7`. By default, star warnings focus on 4-cost and 5-cost units because they are the most valuable and scarce three-star targets.
 
+Default public pool sizes are `1:30,2:25,3:18,4:10,5:9`. If the current Golden Spatula season uses a different bag size, override it:
+
+```powershell
+python main.py core-advice --owned 4费薇古丝x7 --pool-sizes 1:29,2:22,3:16,4:12,5:10
+```
+
 Clear the local card count tracker between games:
 
 ```powershell
