@@ -5,9 +5,10 @@ import sys
 import time
 from pathlib import Path
 
+from .advice import AdviceReport, build_advice
 from .gui import JkcheeseGui
 from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
-from .ocr import OcrReading, read_screenshot
+from .ocr import OcrReading, export_ocr_debug, read_screenshot
 from .region_capture import crop_regions
 
 
@@ -46,11 +47,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     read = subparsers.add_parser("read", help="Read gold, level, and HP from an existing screenshot")
     read.add_argument("--input", type=Path, required=True)
+    read.add_argument("--debug-output", type=Path, default=None)
 
     capture_read = subparsers.add_parser("capture-read", help="Capture a screenshot and read gold, level, and HP")
     capture_read.add_argument("--index", type=int, default=0)
     capture_read.add_argument("--output", type=Path, default=Path("captures") / "reads")
     capture_read.add_argument("--launch-if-needed", action="store_true")
+    capture_read.add_argument("--debug-output", type=Path, default=None)
+
+    advise = subparsers.add_parser("advise", help="Read a screenshot and print basic economy advice")
+    advise.add_argument("--input", type=Path, required=True)
+    advise.add_argument("--debug-output", type=Path, default=None)
+
+    capture_advise = subparsers.add_parser("capture-advise", help="Capture a screenshot and print basic economy advice")
+    capture_advise.add_argument("--index", type=int, default=0)
+    capture_advise.add_argument("--output", type=Path, default=Path("captures") / "advice")
+    capture_advise.add_argument("--launch-if-needed", action="store_true")
+    capture_advise.add_argument("--debug-output", type=Path, default=None)
 
     return parser
 
@@ -59,6 +72,30 @@ def _print_readings(readings: list[OcrReading]) -> None:
     for reading in readings:
         value = reading.text if reading.text else "-"
         print(f"{reading.name}: {value} (confidence {reading.confidence:.3f})")
+
+
+def _print_advice(report: AdviceReport) -> None:
+    _print_readings(list(report.readings))
+    if report.warnings:
+        print("")
+        print("Warnings:")
+        for warning in report.warnings:
+            print(f"- {warning.message}")
+
+    print("")
+    print("Advice:")
+    for item in report.advice:
+        print(f"- [{item.severity}] {item.title}: {item.detail}")
+
+
+def _export_debug_if_requested(image_path: Path, debug_output: Path | None) -> None:
+    if debug_output is None:
+        return
+    target = debug_output if debug_output.is_absolute() else Path.cwd() / debug_output
+    exports = export_ocr_debug(image_path, target)
+    print(f"Debug exported to: {target.resolve()}")
+    for export in exports:
+        print(f"{export.field_name}: {export.region_path.name}, {export.roi_path.name}, {export.mask_path.name}")
 
 
 def run_cli(args: argparse.Namespace) -> int:
@@ -78,6 +115,13 @@ def run_cli(args: argparse.Namespace) -> int:
     if args.command == "read":
         readings = read_screenshot(args.input)
         _print_readings(readings)
+        _export_debug_if_requested(args.input, args.debug_output)
+        return 0
+
+    if args.command == "advise":
+        readings = read_screenshot(args.input)
+        _print_advice(build_advice(readings))
+        _export_debug_if_requested(args.input, args.debug_output)
         return 0
 
     client = LDPlayerClient(args.root)
@@ -147,6 +191,18 @@ def run_cli(args: argparse.Namespace) -> int:
         readings = read_screenshot(saved)
         print(f"Screenshot saved to: {saved}")
         _print_readings(readings)
+        _export_debug_if_requested(saved, args.debug_output)
+        return 0
+
+    if args.command == "capture-advise":
+        base_output = args.output if args.output.is_absolute() else Path.cwd() / args.output
+        session_dir = base_output / time.strftime("%Y%m%d_%H%M%S")
+        screenshot_path = session_dir / "screen.png"
+        saved = client.capture_screenshot(args.index, screenshot_path, launch_if_needed=args.launch_if_needed)
+        readings = read_screenshot(saved)
+        print(f"Screenshot saved to: {saved}")
+        _print_advice(build_advice(readings))
+        _export_debug_if_requested(saved, args.debug_output)
         return 0
 
     raise LDPlayerError(f"Unknown command: {args.command}")

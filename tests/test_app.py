@@ -53,3 +53,21 @@ def test_parser_reads_capture_read_command():
 
     assert args.command == "capture-read"
     assert args.index == 3
+
+
+def test_parser_reads_advise_command():
+    parser = build_parser()
+    args = parser.parse_args(["advise", "--input", "screen.png", "--debug-output", "debug"])
+
+    assert args.command == "advise"
+    assert str(args.input) == "screen.png"
+    assert str(args.debug_output) == "debug"
+
+
+def test_parser_reads_capture_advise_command():
+    parser = build_parser()
+    args = parser.parse_args(["capture-advise", "--index", "4", "--debug-output", "debug"])
+
+    assert args.command == "capture-advise"
+    assert args.index == 4
+    assert str(args.debug_output) == "debug"

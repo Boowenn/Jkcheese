@@ -11,6 +11,8 @@ Current module scope:
 - capture emulator screenshots
 - crop known in-game regions from screenshots
 - read gold, level, and HP from screenshots
+- print confidence warnings and basic economy advice
+- export OCR debug crops for calibration
 - provide a simple Windows GUI
 - build a one-file EXE with PyInstaller
 - run unit tests
@@ -66,6 +68,18 @@ Capture and read gold, level, and HP in one step:
 python main.py capture-read --index 0 --output captures\reads --launch-if-needed
 ```
 
+Get basic economy advice from an existing screenshot:
+
+```powershell
+python main.py advise --input captures\live_game.png --debug-output captures\debug
+```
+
+Capture and get advice in one step:
+
+```powershell
+python main.py capture-advise --index 0 --output captures\advice --launch-if-needed
+```
+
 Build the EXE:
 
 ```powershell
@@ -93,7 +107,7 @@ py -3.14 -m pytest -q
 
 ## Current module
 
-`v0.3.0` includes the first three modules:
+`v0.4.0` includes the first four modules:
 
 - LDPlayer connection
 - game launch
@@ -102,11 +116,12 @@ py -3.14 -m pytest -q
 - 1920x1080 in-game region presets
 - region crop export for gold, level, HP, traits, shop, bench, and opponents
 - lightweight local digit OCR for gold, level, and HP
+- confidence warnings, debug exports, and basic economy advice
 
 ## Next module
 
-The next planned module is improving OCR quality and using readings for advice:
+The next planned module is making advice richer:
 
-- confidence-aware warnings
+- clearer rule tuning around stage and shop state
 - OCR calibration samples
 - shop card recognition experiments

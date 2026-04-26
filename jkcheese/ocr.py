@@ -39,6 +39,14 @@ class Component:
     image: Image.Image
 
 
+@dataclass(frozen=True, slots=True)
+class DebugExport:
+    field_name: str
+    region_path: Path
+    roi_path: Path
+    mask_path: Path
+
+
 FIELDS: tuple[OcrField, ...] = (
     OcrField(
         name="gold",
@@ -87,6 +95,45 @@ def read_screenshot(image_path: Path, preset: RegionPreset | None = None) -> lis
             readings.append(read_field_crop(crop, field))
 
     return readings
+
+
+def export_ocr_debug(
+    image_path: Path,
+    output_dir: Path,
+    preset: RegionPreset | None = None,
+) -> list[DebugExport]:
+    preset = preset or default_preset()
+    image_path = image_path.resolve()
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    exports: list[DebugExport] = []
+    with Image.open(image_path) as image:
+        source = image.convert("RGB")
+        for field in FIELDS:
+            region = preset.get(field.region_name)
+            region_crop = source.crop(region.box_for(source.size, preset.base_size))
+            roi_crop = region_crop.crop(field.roi)
+            mask = _foreground_mask(roi_crop)
+
+            region_path = output_dir / f"{field.name}_region.png"
+            roi_path = output_dir / f"{field.name}_roi.png"
+            mask_path = output_dir / f"{field.name}_mask.png"
+
+            region_crop.save(region_path)
+            roi_crop.save(roi_path)
+            mask.convert("L").save(mask_path)
+
+            exports.append(
+                DebugExport(
+                    field_name=field.name,
+                    region_path=region_path,
+                    roi_path=roi_path,
+                    mask_path=mask_path,
+                )
+            )
+
+    return exports
 
 
 def read_field_crop(image: Image.Image, field: OcrField) -> OcrReading:

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageDraw, ImageFont
 
-from jkcheese.ocr import read_screenshot
+from jkcheese.ocr import export_ocr_debug, read_screenshot
 
 
 def _test_font(size: int):
@@ -40,3 +40,17 @@ def test_read_screenshot_reads_core_numbers(tmp_path):
     assert readings["gold"].confidence > 0.5
     assert readings["level"].confidence > 0.5
     assert readings["player_hp"].confidence > 0.5
+
+
+def test_export_ocr_debug_writes_region_roi_and_mask(tmp_path):
+    image = Image.new("RGB", (1920, 1080), (0, 0, 0))
+    path = tmp_path / "screen.png"
+    image.save(path)
+
+    exports = export_ocr_debug(path, tmp_path / "debug")
+
+    assert {export.field_name for export in exports} == {"gold", "level", "player_hp"}
+    for export in exports:
+        assert export.region_path.exists()
+        assert export.roi_path.exists()
+        assert export.mask_path.exists()
