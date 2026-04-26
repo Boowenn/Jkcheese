@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .gui import JkcheeseGui
 from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
+from .region_capture import crop_regions
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -31,10 +32,34 @@ def build_parser() -> argparse.ArgumentParser:
     screenshot.add_argument("--output", type=Path, default=Path("captures") / "latest.png")
     screenshot.add_argument("--launch-if-needed", action="store_true")
 
+    regions = subparsers.add_parser("regions", help="Crop known regions from an existing screenshot")
+    regions.add_argument("--input", type=Path, required=True)
+    regions.add_argument("--output", type=Path, default=Path("captures") / "regions")
+    regions.add_argument("--names", nargs="*", default=None)
+
+    capture_regions = subparsers.add_parser("capture-regions", help="Capture a screenshot and crop known regions")
+    capture_regions.add_argument("--index", type=int, default=0)
+    capture_regions.add_argument("--output", type=Path, default=Path("captures") / "regions")
+    capture_regions.add_argument("--launch-if-needed", action="store_true")
+    capture_regions.add_argument("--names", nargs="*", default=None)
+
     return parser
 
 
 def run_cli(args: argparse.Namespace) -> int:
+    if args.command is None:
+        gui = JkcheeseGui()
+        gui.run()
+        return 0
+
+    if args.command == "regions":
+        output = args.output if args.output.is_absolute() else Path.cwd() / args.output
+        results = crop_regions(args.input, output, names=args.names)
+        print(f"Cropped {len(results)} regions to: {output.resolve()}")
+        for result in results:
+            print(f"{result.name}: {result.path}")
+        return 0
+
     client = LDPlayerClient(args.root)
 
     if args.command == "inspect":
@@ -81,9 +106,20 @@ def run_cli(args: argparse.Namespace) -> int:
         print(f"Screenshot saved to: {saved}")
         return 0
 
-    gui = JkcheeseGui()
-    gui.run()
-    return 0
+    if args.command == "capture-regions":
+        base_output = args.output if args.output.is_absolute() else Path.cwd() / args.output
+        session_dir = base_output / time.strftime("%Y%m%d_%H%M%S")
+        screenshot_path = session_dir / "screen.png"
+        saved = client.capture_screenshot(args.index, screenshot_path, launch_if_needed=args.launch_if_needed)
+        region_dir = session_dir / "regions"
+        results = crop_regions(saved, region_dir, names=args.names)
+        print(f"Screenshot saved to: {saved}")
+        print(f"Cropped {len(results)} regions to: {region_dir.resolve()}")
+        for result in results:
+            print(f"{result.name}: {result.path}")
+        return 0
+
+    raise LDPlayerError(f"Unknown command: {args.command}")
 
 
 def main(argv: list[str] | None = None) -> int:

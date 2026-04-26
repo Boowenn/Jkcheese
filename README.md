@@ -9,6 +9,7 @@ Current module scope:
 - launch the emulator
 - launch the game
 - capture emulator screenshots
+- crop known in-game regions from screenshots
 - provide a simple Windows GUI
 - build a one-file EXE with PyInstaller
 - run unit tests
@@ -40,6 +41,18 @@ python main.py run-game --index 0 --launch-if-needed
 python main.py screenshot --index 0
 ```
 
+Crop regions from an existing screenshot:
+
+```powershell
+python main.py regions --input captures\live_game.png --output captures\regions
+```
+
+Capture and crop regions in one step:
+
+```powershell
+python main.py capture-regions --index 0 --output captures\regions --launch-if-needed
+```
+
 Build the EXE:
 
 ```powershell
@@ -67,18 +80,20 @@ py -3.14 -m pytest -q
 
 ## Current module
 
-`v0.1.0` is the first module:
+`v0.2.0` includes the first two modules:
 
 - LDPlayer connection
 - game launch
 - screenshot pipeline
 - simple end-user GUI
+- 1920x1080 in-game region presets
+- region crop export for gold, level, HP, traits, shop, bench, and opponents
 
 ## Next module
 
-The next planned module is in-game region presets for `1920x1080`, which will prepare:
+The next planned module is OCR over the cropped regions, starting with:
 
 - gold OCR
 - level OCR
 - HP OCR
-- shop-area export
+- shop card text/image recognition experiments

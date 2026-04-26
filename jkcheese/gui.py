@@ -9,6 +9,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from .config import AppConfig
 from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
+from .region_capture import crop_regions
 from .version import __version__
 
 
@@ -17,8 +18,8 @@ class JkcheeseGui:
         self.config = AppConfig.load()
         self.root = tk.Tk()
         self.root.title(f"Jkcheese v{__version__}")
-        self.root.geometry("900x620")
-        self.root.minsize(860, 560)
+        self.root.geometry("980x660")
+        self.root.minsize(940, 600)
 
         self.ldplayer_root_var = tk.StringVar(value=self.config.ldplayer_root)
         self.instance_var = tk.StringVar(value=str(self.config.instance_index))
@@ -29,6 +30,7 @@ class JkcheeseGui:
         self.game_process_var = tk.StringVar(value="-")
         self.apk_path_var = tk.StringVar(value="-")
         self.last_capture_var = tk.StringVar(value="-")
+        self.last_regions_var = tk.StringVar(value="-")
         self._busy = False
 
         self._build_ui()
@@ -65,6 +67,7 @@ class JkcheeseGui:
         self._add_status_row(status, 3, "Game Process", self.game_process_var)
         self._add_status_row(status, 4, "APK Path", self.apk_path_var)
         self._add_status_row(status, 5, "Last Capture", self.last_capture_var)
+        self._add_status_row(status, 6, "Last Regions", self.last_regions_var)
 
         actions = ttk.LabelFrame(self.root, text="Actions", padding=16)
         actions.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 12))
@@ -73,15 +76,17 @@ class JkcheeseGui:
         self.launch_button = ttk.Button(actions, text="Launch Emulator", command=self.launch_instance)
         self.run_game_button = ttk.Button(actions, text="Launch Game", command=self.launch_game)
         self.capture_button = ttk.Button(actions, text="Capture Screenshot", command=self.capture_screenshot)
+        self.capture_regions_button = ttk.Button(actions, text="Capture Regions", command=self.capture_regions)
         self.open_folder_button = ttk.Button(actions, text="Open Capture Folder", command=self.open_capture_folder)
 
         self.refresh_button.grid(row=0, column=0, padx=(0, 8), pady=4, sticky="ew")
         self.launch_button.grid(row=0, column=1, padx=8, pady=4, sticky="ew")
         self.run_game_button.grid(row=0, column=2, padx=8, pady=4, sticky="ew")
         self.capture_button.grid(row=0, column=3, padx=8, pady=4, sticky="ew")
-        self.open_folder_button.grid(row=0, column=4, padx=(8, 0), pady=4, sticky="ew")
+        self.capture_regions_button.grid(row=0, column=4, padx=8, pady=4, sticky="ew")
+        self.open_folder_button.grid(row=0, column=5, padx=(8, 0), pady=4, sticky="ew")
 
-        for column in range(5):
+        for column in range(6):
             actions.columnconfigure(column, weight=1)
 
         log_frame = ttk.LabelFrame(self.root, text="Log", padding=12)
@@ -133,6 +138,7 @@ class JkcheeseGui:
             self.launch_button,
             self.run_game_button,
             self.capture_button,
+            self.capture_regions_button,
             self.open_folder_button,
         ):
             button.configure(state=state)
@@ -238,6 +244,26 @@ class JkcheeseGui:
             return f"Screenshot saved to {saved}"
 
         self._run_task("Capturing screenshot", task)
+
+    def capture_regions(self) -> None:
+        def task() -> str:
+            client = self._client()
+            index = self._current_index()
+            capture_dir_text = self.capture_dir_var.get().strip()
+            if not capture_dir_text:
+                raise LDPlayerError("Please choose a capture folder first.")
+
+            session_dir = Path(capture_dir_text) / time.strftime("regions_%Y%m%d_%H%M%S")
+            screenshot_path = session_dir / "screen.png"
+            saved = client.capture_screenshot(index, screenshot_path, launch_if_needed=True)
+            region_dir = session_dir / "regions"
+            results = crop_regions(saved, region_dir)
+
+            self.root.after(0, lambda: self.last_capture_var.set(str(saved)))
+            self.root.after(0, lambda: self.last_regions_var.set(str(region_dir)))
+            return f"Captured {len(results)} regions to {region_dir}"
+
+        self._run_task("Capturing regions", task)
 
     def open_capture_folder(self) -> None:
         capture_dir = Path(self.capture_dir_var.get().strip())
