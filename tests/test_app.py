@@ -71,3 +71,20 @@ def test_parser_reads_capture_advise_command():
     assert args.command == "capture-advise"
     assert args.index == 4
     assert str(args.debug_output) == "debug"
+
+
+def test_parser_reads_lineups_command():
+    parser = build_parser()
+    args = parser.parse_args(["lineups", "--limit", "3"])
+
+    assert args.command == "lineups"
+    assert args.limit == 3
+
+
+def test_parser_reads_recommend_lineup_command():
+    parser = build_parser()
+    args = parser.parse_args(["recommend-lineup", "--seen", "机甲", "远征", "--limit", "2"])
+
+    assert args.command == "recommend-lineup"
+    assert args.seen == ["机甲", "远征"]
+    assert args.limit == 2

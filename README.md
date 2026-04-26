@@ -13,6 +13,8 @@ Current module scope:
 - read gold, level, and HP from screenshots
 - print confidence warnings and basic economy advice
 - export OCR debug crops for calibration
+- fetch S-tier Golden Spatula lineups from the public `实时铲榜` Tencent Docs sheet
+- recommend S-tier lineups from live card/name tokens
 - provide a simple Windows GUI
 - build a one-file EXE with PyInstaller
 - run unit tests
@@ -80,6 +82,18 @@ Capture and get advice in one step:
 python main.py capture-advise --index 0 --output captures\advice --launch-if-needed
 ```
 
+Fetch current S-tier Golden Spatula lineups from `实时铲榜`:
+
+```powershell
+python main.py lineups
+```
+
+Recommend from S-tier lineups using live card/name tokens:
+
+```powershell
+python main.py recommend-lineup --seen 机甲 远征
+```
+
 Build the EXE:
 
 ```powershell
@@ -107,7 +121,7 @@ py -3.14 -m pytest -q
 
 ## Current module
 
-`v0.4.0` includes the first four modules:
+`v0.5.0` includes the first five modules:
 
 - LDPlayer connection
 - game launch
@@ -117,11 +131,12 @@ py -3.14 -m pytest -q
 - region crop export for gold, level, HP, traits, shop, bench, and opponents
 - lightweight local digit OCR for gold, level, and HP
 - confidence warnings, debug exports, and basic economy advice
+- read-only `实时铲榜` S-tier lineup fetching and token-based S lineup recommendation
 
 ## Next module
 
-The next planned module is making advice richer:
+The next planned module is live shop and upgrade warning support:
 
-- clearer rule tuning around stage and shop state
-- OCR calibration samples
 - shop card recognition experiments
+- champion count tracking from read-only screenshots
+- three-star warning prompts for pairs, seven/eight copies, and contested reroll lines

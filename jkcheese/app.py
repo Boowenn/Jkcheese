@@ -8,6 +8,14 @@ from pathlib import Path
 from .advice import AdviceReport, build_advice
 from .gui import JkcheeseGui
 from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
+from .lineups import (
+    DEFAULT_LINEUP_URL,
+    Lineup,
+    LineupRecommendation,
+    LineupSourceError,
+    fetch_jcc_s_lineups,
+    recommend_lineups,
+)
 from .ocr import OcrReading, export_ocr_debug, read_screenshot
 from .region_capture import crop_regions
 
@@ -65,6 +73,15 @@ def build_parser() -> argparse.ArgumentParser:
     capture_advise.add_argument("--launch-if-needed", action="store_true")
     capture_advise.add_argument("--debug-output", type=Path, default=None)
 
+    lineups = subparsers.add_parser("lineups", help="Fetch S-tier Golden Spatula lineups from 实时铲榜")
+    lineups.add_argument("--source", default=DEFAULT_LINEUP_URL)
+    lineups.add_argument("--limit", type=int, default=10)
+
+    recommend_lineup = subparsers.add_parser("recommend-lineup", help="Recommend S-tier lineups from live card tokens")
+    recommend_lineup.add_argument("--source", default=DEFAULT_LINEUP_URL)
+    recommend_lineup.add_argument("--seen", nargs="*", default=[])
+    recommend_lineup.add_argument("--limit", type=int, default=5)
+
     return parser
 
 
@@ -86,6 +103,24 @@ def _print_advice(report: AdviceReport) -> None:
     print("Advice:")
     for item in report.advice:
         print(f"- [{item.severity}] {item.title}: {item.detail}")
+
+
+def _print_lineups(lineups: tuple[Lineup, ...], limit: int) -> None:
+    for lineup in lineups[:limit]:
+        notes = f" | notes: {'; '.join(lineup.notes)}" if lineup.notes else ""
+        code = f" | code: {lineup.code}" if lineup.code else ""
+        print(f"- [{lineup.tier}] {lineup.name}{notes}{code}")
+
+
+def _print_lineup_recommendations(recommendations: tuple[LineupRecommendation, ...]) -> None:
+    for item in recommendations:
+        lineup = item.lineup
+        matched = f" | matched: {', '.join(item.matched_tokens)}" if item.matched_tokens else ""
+        notes = f" | notes: {'; '.join(lineup.notes)}" if lineup.notes else ""
+        print(f"- [{lineup.tier}] {lineup.name} (score {item.score}){matched}{notes}")
+        print(f"  reason: {item.reason}")
+        if lineup.code:
+            print(f"  code: {lineup.code}")
 
 
 def _export_debug_if_requested(image_path: Path, debug_output: Path | None) -> None:
@@ -122,6 +157,19 @@ def run_cli(args: argparse.Namespace) -> int:
         readings = read_screenshot(args.input)
         _print_advice(build_advice(readings))
         _export_debug_if_requested(args.input, args.debug_output)
+        return 0
+
+    if args.command == "lineups":
+        lineups = fetch_jcc_s_lineups(args.source)
+        print(f"Fetched {len(lineups)} S-tier lineups from 实时铲榜.")
+        _print_lineups(lineups, args.limit)
+        return 0
+
+    if args.command == "recommend-lineup":
+        lineups = fetch_jcc_s_lineups(args.source)
+        recommendations = recommend_lineups(lineups, tuple(args.seen), limit=args.limit)
+        print(f"Recommendations from {len(lineups)} S-tier lineups.")
+        _print_lineup_recommendations(recommendations)
         return 0
 
     client = LDPlayerClient(args.root)
@@ -214,6 +262,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return run_cli(args)
     except LDPlayerError as exc:
+        print(f"Error: {exc}")
+        return 1
+    except LineupSourceError as exc:
         print(f"Error: {exc}")
         return 1
     except KeyboardInterrupt:
