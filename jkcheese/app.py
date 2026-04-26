@@ -63,7 +63,7 @@ from .shop_recognition import (
     scan_shop,
 )
 from .shop_hits import build_shop_hit_alerts, format_shop_hit_alerts
-from .single_instance import SingleInstance, notify_already_running
+from .single_instance import SingleInstance
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -132,31 +132,31 @@ def build_parser() -> argparse.ArgumentParser:
     capture_tempo.add_argument("--debug-output", type=Path, default=None)
     _add_tempo_args(capture_tempo)
 
-    lineups = subparsers.add_parser("lineups", help="Fetch S-tier Golden Spatula lineups from 实时铲榜")
+    lineups = subparsers.add_parser("lineups", help="Fetch S/S- Golden Spatula lineups from 实时铲榜")
     lineups.add_argument("--source", default=DEFAULT_LINEUP_URL)
     lineups.add_argument("--limit", type=int, default=10)
 
-    recommend_lineup = subparsers.add_parser("recommend-lineup", help="Recommend S-tier lineups from live card tokens")
+    recommend_lineup = subparsers.add_parser("recommend-lineup", help="Recommend S/S- lineups from live card tokens")
     recommend_lineup.add_argument("--source", default=DEFAULT_LINEUP_URL)
     recommend_lineup.add_argument("--seen", nargs="*", default=[])
     recommend_lineup.add_argument("--limit", type=int, default=5)
 
     item_advice = subparsers.add_parser(
         "item-advice",
-        help="Recommend main carry, main tank, and items from S-tier lineups",
+        help="Recommend main carry, main tank, and items from S/S- lineups",
     )
     item_advice.add_argument("--shop", nargs="*", default=[], help="Recognized current shop cards")
     _add_core_advice_args(item_advice)
 
     core_advice = subparsers.add_parser(
         "core-advice",
-        help="Track owned cards and recommend S-tier lineups from live tokens",
+        help="Track owned cards and recommend S/S- lineups from live tokens",
     )
     _add_core_advice_args(core_advice)
 
     capture_core_advice = subparsers.add_parser(
         "capture-core-advice",
-        help="Capture a screenshot, then print card warnings and S-tier lineup advice",
+        help="Capture a screenshot, then print card warnings and S/S- lineup advice",
     )
     capture_core_advice.add_argument("--index", type=int, default=0)
     capture_core_advice.add_argument("--output", type=Path, default=Path("captures") / "core")
@@ -386,7 +386,6 @@ def run_cli(args: argparse.Namespace) -> int:
     if args.command is None:
         guard = SingleInstance()
         if not guard.acquire():
-            notify_already_running()
             return 0
         try:
             gui = JkcheeseGui()
@@ -425,14 +424,14 @@ def run_cli(args: argparse.Namespace) -> int:
 
     if args.command == "lineups":
         lineups = fetch_jcc_s_lineups(args.source)
-        print(f"Fetched {len(lineups)} S-tier lineups from 实时铲榜.")
+        print(f"Fetched {len(lineups)} S/S- lineups from 实时铲榜.")
         _print_lineups(lineups, args.limit)
         return 0
 
     if args.command == "recommend-lineup":
         lineups = fetch_jcc_s_lineups(args.source)
         recommendations = recommend_lineups(lineups, tuple(args.seen), limit=args.limit)
-        print(f"Recommendations from {len(lineups)} S-tier lineups.")
+        print(f"Recommendations from {len(lineups)} S/S- lineups.")
         _print_lineup_recommendations(recommendations)
         return 0
 

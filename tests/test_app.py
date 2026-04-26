@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 
 from jkcheese.app import build_parser
+from jkcheese import app
 
 
 def test_parser_allows_gui_mode_without_subcommand():
@@ -11,6 +12,21 @@ def test_parser_allows_gui_mode_without_subcommand():
 
     assert isinstance(args, argparse.Namespace)
     assert args.command is None
+
+
+def test_gui_duplicate_instance_exits_quietly(monkeypatch):
+    class Guard:
+        def acquire(self):
+            return False
+
+        def release(self):
+            raise AssertionError("release should not be called when acquire fails")
+
+    monkeypatch.setattr(app, "SingleInstance", Guard)
+    monkeypatch.setattr(app, "JkcheeseGui", lambda: (_ for _ in ()).throw(AssertionError("GUI should not open")))
+
+    parser = build_parser()
+    assert app.run_cli(parser.parse_args([])) == 0
 
 
 def test_parser_reads_screenshot_command():

@@ -45,7 +45,7 @@ class LineupRecommendation:
 
 
 def fetch_jcc_s_lineups(url: str = DEFAULT_LINEUP_URL, timeout: int = 20) -> tuple[Lineup, ...]:
-    """Fetch S-tier Golden Spatula lineups from the public Tencent Docs sheet."""
+    """Fetch S and S- Golden Spatula lineups from the public Tencent Docs sheet."""
 
     doc_id, tab_id = parse_docs_url(url)
     payload = _fetch_opendoc(doc_id, tab_id, url, timeout)
@@ -76,22 +76,34 @@ def extract_s_lineups_from_grid(grid: dict[int, dict[int, str]]) -> tuple[Lineup
         raise LineupSourceError("Could not find the S lineup section marker in 实时铲榜.")
 
     lineups: list[Lineup] = []
+    block_index = 0
+    in_block = False
     for row in range(marker_row + 1, max(grid.keys(), default=marker_row) + 1):
         name_cell = grid.get(row, {}).get(0, "")
-        if not name_cell and lineups:
-            break
-        if not _looks_like_lineup_name(name_cell):
-            if lineups:
-                break
+        if not name_cell:
+            if in_block:
+                block_index += 1
+                in_block = False
+                if block_index >= 2:
+                    break
             continue
+        if not _looks_like_lineup_name(name_cell):
+            if in_block:
+                block_index += 1
+                in_block = False
+                if block_index >= 2:
+                    break
+            continue
+        in_block = True
         name, inline_notes = _split_name_and_notes(name_cell)
         row_values = tuple(grid.get(row, {}).values())
         code = _first_code(row_values)
         notes = tuple(dict.fromkeys((*inline_notes, *_row_notes(row_values, name, code))))
-        lineups.append(Lineup(name=name, tier="S", notes=notes, code=code, source_row=row))
+        tier = "S" if block_index == 0 else "S-"
+        lineups.append(Lineup(name=name, tier=tier, notes=notes, code=code, source_row=row))
 
     if not lineups:
-        raise LineupSourceError("No S lineups were found in 实时铲榜.")
+        raise LineupSourceError("No S/S- lineups were found in 实时铲榜.")
     return tuple(lineups)
 
 

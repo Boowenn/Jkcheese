@@ -78,7 +78,7 @@ def format_overlay_summary(
     lines = [
         f"商店: {shop_summary or '等待识别'}",
         f"必买: {hit_summary or '暂无'}",
-        f"S阵容: {lineup_summary or '等待匹配'}",
+        f"S/S-阵容: {lineup_summary or '等待匹配'}",
         f"追三: {chase_summary or '等待读数'}",
         f"节奏: {tempo_summary or '等待读数'}",
     ]
@@ -105,6 +105,22 @@ def build_shop_highlights(alerts, source_size: tuple[int, int]) -> tuple[ShopHig
     return tuple(highlights)
 
 
+def build_calibration_highlights(source_size: tuple[int, int]) -> tuple[ShopHighlight, ...]:
+    preset = default_preset()
+    highlights: list[ShopHighlight] = []
+    for slot in range(1, 6):
+        highlights.append(
+            ShopHighlight(
+                slot=slot,
+                name=f"槽{slot}",
+                severity="info",
+                title="校准",
+                box=preset.get(f"shop_slot_{slot}").box_for(source_size, preset.base_size),
+            )
+        )
+    return tuple(highlights)
+
+
 def map_capture_box_to_screen(
     box: tuple[int, int, int, int],
     source_size: tuple[int, int],
@@ -126,13 +142,18 @@ def map_capture_box_to_screen(
 
 def choose_highlight_target_rect(
     auto_rect: ScreenRect | None,
-    manual_rect: ScreenRect | None,
     *,
-    drag_enabled: bool,
+    offset_x: int = 0,
+    offset_y: int = 0,
 ) -> ScreenRect | None:
-    if drag_enabled and manual_rect is not None:
-        return manual_rect
-    return auto_rect
+    if auto_rect is None:
+        return None
+    return ScreenRect(
+        x=auto_rect.x + offset_x,
+        y=auto_rect.y + offset_y,
+        width=auto_rect.width,
+        height=auto_rect.height,
+    )
 
 
 def _shorten(text: str, limit: int) -> str:
@@ -257,9 +278,9 @@ def format_reading_summary(readings: list[OcrReading] | tuple[OcrReading, ...]) 
 
 
 def format_lineup_panel(core_report) -> str:
-    lines = ["S 阵容推荐"]
+    lines = ["S/S- 阵容推荐"]
     if not core_report.recommendations:
-        lines.append("- 暂无推荐，先扫描商店或点击 S 阵容。")
+        lines.append("- 暂无推荐，先扫描商店或点击 S/S- 阵容。")
         return "\n".join(lines)
     for index, item in enumerate(core_report.recommendations[:5], start=1):
         matched = f" | 命中: {', '.join(item.matched_tokens)}" if item.matched_tokens else ""
@@ -282,7 +303,7 @@ def format_star_panel(core_report, hit_alerts=()) -> str:
         lines.append("")
         lines.append("已记录棋子:")
         for warning in core_report.warnings[:6]:
-            related = f" | S 阵容: {', '.join(warning.matched_lineups)}" if warning.matched_lineups else ""
+            related = f" | S/S- 阵容: {', '.join(warning.matched_lineups)}" if warning.matched_lineups else ""
             lines.append(f"- [{warning.severity}] {warning.title}{related}")
     else:
         lines.append("")
@@ -325,6 +346,8 @@ class JkcheeseGui:
         self.live_tokens_var = tk.StringVar(value="")
         self.owned_cards_var = tk.StringVar(value="")
         self.item_components_var = tk.StringVar(value="")
+        self.highlight_offset_x_var = tk.IntVar(value=self.config.highlight_offset_x)
+        self.highlight_offset_y_var = tk.IntVar(value=self.config.highlight_offset_y)
         self.stage_value_var = tk.StringVar(value="?")
         self.level_value_var = tk.StringVar(value="?")
         self.gold_value_var = tk.StringVar(value="?")
@@ -341,7 +364,7 @@ class JkcheeseGui:
         self._highlight_overlay: tk.Toplevel | None = None
         self._highlight_canvas: tk.Canvas | None = None
         self._highlight_drag: tuple[int, int] | None = None
-        self._highlight_manual_rect: ScreenRect | None = None
+        self._highlight_auto_rect: ScreenRect | None = None
         self._panels: dict[str, tk.Text] = {}
 
         self._build_ui()
@@ -377,7 +400,7 @@ class JkcheeseGui:
         ).grid(row=0, column=0, sticky="w")
         tk.Label(
             header,
-            text="一键看清：截图状态、S 阵容、三星警告、追三概率、装备主 C、当前节奏",
+            text="一键看清：截图状态、S/S- 阵容、三星警告、追三概率、装备主 C、当前节奏",
             bg=DARK_BG,
             fg="#d8e6dc",
             font=SUBTITLE_FONT,
@@ -547,10 +570,13 @@ class JkcheeseGui:
         width = self._highlight_overlay.winfo_width()
         height = self._highlight_overlay.winfo_height()
         self._highlight_overlay.geometry(f"+{x}+{y}")
-        self._highlight_manual_rect = ScreenRect(x=x, y=y, width=width, height=height)
+        if self._highlight_auto_rect is not None:
+            self.highlight_offset_x_var.set(x - self._highlight_auto_rect.x)
+            self.highlight_offset_y_var.set(y - self._highlight_auto_rect.y)
+            self._save_config()
         self._highlight_drag = (event.x_root, event.y_root)
 
-    def _draw_shop_highlights(self, alerts, source_size: tuple[int, int]) -> None:
+    def _draw_shop_highlights(self, alerts, source_size: tuple[int, int], *, force_calibration: bool = False) -> None:
         if self._highlight_overlay is None or self._highlight_canvas is None:
             return
         if not self.overlay_enabled_var.get():
@@ -559,13 +585,20 @@ class JkcheeseGui:
 
         highlights = build_shop_highlights(alerts, source_size)
         if not highlights:
-            self._hide_shop_highlights()
-            return
+            if force_calibration or self.highlight_drag_var.get():
+                highlights = build_calibration_highlights(source_size)
+            else:
+                self._hide_shop_highlights()
+                return
 
+        auto_rect = find_ldplayer_client_rect(self.instance_name_var.get())
+        if auto_rect is None and (force_calibration or self.highlight_drag_var.get()):
+            auto_rect = ScreenRect(x=80, y=80, width=960, height=540)
+        self._highlight_auto_rect = auto_rect
         rect = choose_highlight_target_rect(
-            find_ldplayer_client_rect(self.instance_name_var.get()),
-            self._highlight_manual_rect,
-            drag_enabled=self.highlight_drag_var.get(),
+            auto_rect,
+            offset_x=int(self.highlight_offset_x_var.get()),
+            offset_y=int(self.highlight_offset_y_var.get()),
         )
         if rect is None:
             self._hide_shop_highlights()
@@ -613,12 +646,12 @@ class JkcheeseGui:
                 )
                 canvas.tag_raise(text_id, bg_id)
 
-        if self.highlight_drag_var.get():
-            canvas.create_rectangle(8, 8, 188, 36, fill="#17362f", outline="#ffd60a", width=2)
+        if self.highlight_drag_var.get() or force_calibration:
+            canvas.create_rectangle(8, 8, 232, 36, fill="#17362f", outline="#ffd60a", width=2)
             canvas.create_text(
                 18,
                 15,
-                text="拖动这里校准高亮框",
+                text="拖动任意位置校准，调好后取消勾选",
                 anchor="nw",
                 fill="#fff7e4",
                 font=("Microsoft YaHei UI", 10, "bold"),
@@ -635,6 +668,11 @@ class JkcheeseGui:
         if self._highlight_overlay is not None:
             self._highlight_overlay.withdraw()
 
+    def show_highlight_calibration(self) -> None:
+        self.highlight_drag_var.set(True)
+        self._on_highlight_drag_toggled()
+        self._draw_shop_highlights((), default_preset().base_size, force_calibration=True)
+
     def _on_overlay_toggled(self) -> None:
         if self._overlay is None:
             return
@@ -648,14 +686,13 @@ class JkcheeseGui:
 
     def _on_highlight_drag_toggled(self) -> None:
         enabled = self.highlight_drag_var.get()
-        if not enabled:
-            self._highlight_manual_rect = None
         if self._highlight_overlay is not None:
             _set_window_click_through(self._highlight_overlay, not enabled)
         if enabled:
-            self.auto_scan_status_var.set("高亮框校准：可拖动，调完请取消勾选")
+            self.auto_scan_status_var.set("高亮框校准：可自由拖动，调完请取消勾选")
+            self._draw_shop_highlights((), default_preset().base_size, force_calibration=True)
         else:
-            self.auto_scan_status_var.set("高亮框校准：已锁定雷电窗口并点击穿透")
+            self.auto_scan_status_var.set("高亮框校准：已记住偏移并点击穿透")
         self._save_config()
 
     def _on_auto_settings_changed(self) -> None:
@@ -724,6 +761,7 @@ class JkcheeseGui:
         auto_bar.columnconfigure(0, weight=1)
         auto_bar.columnconfigure(1, weight=1)
         auto_bar.columnconfigure(2, weight=1)
+        auto_bar.columnconfigure(3, weight=1)
         self.auto_scan_check = ttk.Checkbutton(
             auto_bar,
             text="自动识别商店",
@@ -738,13 +776,15 @@ class JkcheeseGui:
         )
         self.highlight_drag_check = ttk.Checkbutton(
             auto_bar,
-            text="拖动校准高亮框",
+            text="自由拖高亮框",
             variable=self.highlight_drag_var,
             command=self._on_highlight_drag_toggled,
         )
+        self.highlight_preview_button = ttk.Button(auto_bar, text="显示校准框", command=self.show_highlight_calibration)
         self.auto_scan_check.grid(row=0, column=0, sticky="w")
         self.overlay_check.grid(row=0, column=1, sticky="w")
         self.highlight_drag_check.grid(row=0, column=2, sticky="w")
+        self.highlight_preview_button.grid(row=0, column=3, sticky="ew", padx=(6, 0))
 
         status = tk.Frame(card, bg="#f0e6d2", padx=8, pady=8)
         status.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(10, 0))
@@ -794,7 +834,7 @@ class JkcheeseGui:
         )
         tk.Label(
             card,
-            text="主流程会自动截图识别商店、读阶段/金币，并把结果喂给 S 阵容、三星警告和追三概率。",
+            text="主流程会自动截图识别商店、读阶段/金币，并把结果喂给 S/S- 阵容、三星警告和追三概率。",
             bg=CARD_BG,
             fg="#6b5a43",
             font=("Microsoft YaHei UI", 9),
@@ -818,7 +858,7 @@ class JkcheeseGui:
         self.item_button = ttk.Button(buttons, text="装备主 C", command=self.get_item_advice)
         self.scout_button = ttk.Button(buttons, text="侦查对手", command=self.scout_opponent)
         self.reset_cards_button = ttk.Button(buttons, text="重置棋子计数", command=self.reset_card_counts)
-        self.lineups_button = ttk.Button(buttons, text="查看 S 阵容", command=self.fetch_s_lineups)
+        self.lineups_button = ttk.Button(buttons, text="查看 S/S- 阵容", command=self.fetch_s_lineups)
         self.core_button.grid(row=0, column=0, sticky="ew", padx=(0, 4), pady=3)
         self.shop_scan_button.grid(row=0, column=1, sticky="ew", padx=(4, 0), pady=3)
         self.item_button.grid(row=1, column=0, sticky="ew", padx=(0, 4), pady=3)
@@ -838,7 +878,7 @@ class JkcheeseGui:
 
     def _build_right_dashboard(self, parent: tk.Widget) -> None:
         self._panel(parent, "current", "当前建议", row=0, column=0, columnspan=2, height=5)
-        self._panel(parent, "lineups", "S 阵容推荐", row=1, column=0, height=6)
+        self._panel(parent, "lineups", "S/S- 阵容推荐", row=1, column=0, height=6)
         self._panel(parent, "stars", "三星警告 / 商店必买", row=1, column=1, height=6)
         self._panel(parent, "chase", "追三概率", row=2, column=0, height=5)
         self._panel(parent, "items", "装备和主 C", row=2, column=1, height=5)
@@ -912,6 +952,8 @@ class JkcheeseGui:
         self.config.auto_scan_enabled = self.auto_scan_var.get()
         self.config.overlay_enabled = self.overlay_enabled_var.get()
         self.config.highlight_drag_enabled = self.highlight_drag_var.get()
+        self.config.highlight_offset_x = int(self.highlight_offset_x_var.get())
+        self.config.highlight_offset_y = int(self.highlight_offset_y_var.get())
         self.config.save()
 
     def _current_index(self) -> int:
@@ -946,6 +988,7 @@ class JkcheeseGui:
             self.auto_scan_check,
             self.overlay_check,
             self.highlight_drag_check,
+            self.highlight_preview_button,
         ):
             button.configure(state=state)
 
@@ -1277,15 +1320,15 @@ class JkcheeseGui:
             lineups = fetch_jcc_s_lineups()
             recommendations = recommend_lineups(lineups, limit=5)
             summary = "; ".join(item.lineup.name for item in recommendations)
-            lines = ["S 阵容推荐"]
+            lines = ["S/S- 阵容推荐"]
             for index, item in enumerate(recommendations, start=1):
                 notes = f" | 备注: {'; '.join(item.lineup.notes)}" if item.lineup.notes else ""
                 lines.append(f"{index}. {item.lineup.name}{notes}")
             self.root.after(0, lambda: self.last_lineups_var.set(summary))
             self._queue_panel("lineups", "\n".join(lines))
-            return "S 阵容已刷新。"
+            return "S/S- 阵容已刷新。"
 
-        self._run_task("获取 S 阵容", task)
+        self._run_task("获取 S/S- 阵容", task)
 
     def get_core_advice(self) -> None:
         def task() -> str:

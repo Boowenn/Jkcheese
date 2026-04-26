@@ -13,16 +13,16 @@ Current module scope:
 - read stage, gold, level, and HP from screenshots
 - print confidence warnings and stage-aware economy rhythm advice
 - export OCR debug crops for calibration
-- fetch S-tier Golden Spatula lineups from the public `实时铲榜` Tencent Docs sheet
-- recommend S-tier lineups from live card/name tokens
+- fetch S and S- Golden Spatula lineups from the public `实时铲榜` Tencent Docs sheet
+- recommend S/S- lineups from live card/name tokens
 - track owned card copies and warn for cost-aware 4/5-cost star progress
-- combine live tokens, owned cards, and current S-tier lineups into one core advice view
+- combine live tokens, owned cards, and current S/S- lineups into one core advice view
 - scan shop slots, export shop debug crops, and recognize locally labeled shop templates
 - recognize Chinese shop card names with local offline candidate OCR
 - warn immediately when a shop card is a tracked two-star/three-star hit or S-lineup key card
 - estimate 4-cost and 5-cost three-star chase odds from pool, owned copies, contested copies, level, and gold
 - scout a manually opened opponent board from screenshots and count trained contested 4/5-cost targets
-- suggest main carry, main tank, and item direction from real-time S-tier lineups, shop hits, tracked cards, and optional item components
+- suggest main carry, main tank, and item direction from real-time S/S- lineups, shop hits, tracked cards, and optional item components
 - suggest when to level, save, small-D, or all-in from stage, level, gold, and HP
 - provide a Chinese dashboard EXE with left-side screenshot status and right-side recommendation panels
 - build a one-file EXE with PyInstaller
@@ -107,19 +107,19 @@ python main.py capture-tempo --index 0 --stage 3-2 --gold 30
 
 The rhythm engine is conservative and read-only. It suggests whether this is a better window to `升人口`, `存钱`, `小 D`, or `all in`, but it never clicks, buys, rolls, or changes the game.
 
-Fetch current S-tier Golden Spatula lineups from `实时铲榜`:
+Fetch current S/S- Golden Spatula lineups from `实时铲榜`:
 
 ```powershell
 python main.py lineups
 ```
 
-Recommend from S-tier lineups using live card/name tokens:
+Recommend from S/S- lineups using live card/name tokens:
 
 ```powershell
 python main.py recommend-lineup --seen 机甲 远征
 ```
 
-Get the core advice loop with S-tier recommendations and star warnings:
+Get the core advice loop with S/S- recommendations and star warnings:
 
 ```powershell
 python main.py core-advice --seen 机甲 远征 --owned 4费薇古丝x7 --reset
@@ -160,7 +160,7 @@ python main.py shop-scan --input captures\live_game.png
 
 The first scan can show `occupied unknown` for cards that have not been labeled yet. This is expected: module 7 learns local visual templates from your own screenshots so it can recognize the same card art later without external OCR services.
 
-Capture the current emulator screen, scan the shop, and feed recognized shop names into S-tier lineup advice:
+Capture the current emulator screen, scan the shop, and feed recognized shop names into S/S- lineup advice:
 
 ```powershell
 python main.py capture-shop-scan --index 0 --launch-if-needed
@@ -203,7 +203,7 @@ python main.py capture-scout --index 0 --target 千珏 --level 8 --gold 30
 
 `capture-scout` only captures the current screen. It does not switch opponents, click the game, or read game memory. The output includes a `Contested 参数` line such as `千珏=2`, which can be used directly in the chase calculator.
 
-Get main carry, main tank, and item direction from current S-tier lineups:
+Get main carry, main tank, and item direction from current S/S- lineups:
 
 ```powershell
 python main.py item-advice --seen 新星 薇古丝 --shop 薇古丝 盖伦 --items 眼泪 眼泪 大棒 拳套
@@ -244,7 +244,7 @@ py -3.14 -m pytest -q
 
 ## Current module
 
-`v0.13.2` includes the first twelve modules plus a usability fix pass:
+`v0.13.3` includes the first twelve modules plus a usability fix pass:
 
 - LDPlayer connection
 - game launch
@@ -255,7 +255,7 @@ py -3.14 -m pytest -q
 - region crop export for gold, level, HP, traits, shop, bench, and opponents
 - lightweight local digit OCR for stage, gold, level, and HP
 - confidence warnings, debug exports, and basic economy advice
-- read-only `实时铲榜` S-tier lineup fetching and token-based S lineup recommendation
+- read-only `实时铲榜` S/S- lineup fetching and token-based S/S- lineup recommendation
 - card count tracking for owned copies
 - cost-aware pair, two-star, four/five-copy, seven/eight-copy, and three-star warnings
 - default 4/5-cost focus so low-cost shop noise does not drown out real win-condition alerts
@@ -264,7 +264,7 @@ py -3.14 -m pytest -q
 - shop cost digit reading
 - local card-template labeling and recognition with `shop-label`, `shop-scan`, and `capture-shop-scan`
 - offline Chinese shop-name OCR for common champion names
-- shop-hit alerts that say when to buy a visible card because it completes a two-star, pushes a four/five-cost chase, or matches an S-tier lineup
+- shop-hit alerts that say when to buy a visible card because it completes a two-star, pushes a four/five-cost chase, or matches an S/S- lineup
 - GUI Scan Shop button that feeds recognized shop names into the S-line recommendation flow
 - module 8 four/five-cost chase calculator with `chase`
 - automatic chase estimates in `capture-shop-scan` and the GUI Scan Shop flow when level and gold OCR are readable
@@ -279,6 +279,8 @@ py -3.14 -m pytest -q
 - right-top semi-transparent overlay for live "buy this slot", S lineup, chase risk, and tempo hints without switching away from the game
 - click-through shop-slot highlight boxes that frame visible key cards directly over the LDPlayer shop when the window can be located
 - draggable shop highlight calibration mode for misaligned overlays; turn it off after calibration to restore click-through play
+- draggable calibration now keeps the saved offset instead of snapping back to the fixed LDPlayer position
+- duplicate EXE launches exit quietly instead of showing a confusing "already running" popup
 - compact small-screen dashboard with a shorter default window, scrollable left column, and tighter right-side panels
 - read-only live alerts only: the helper can tell you which visible slot to buy, but it never clicks, buys, rolls, or controls the game
 - automatic capture cleanup: generated screenshots are retained briefly during a match, and when the match appears to end the tool clears match screenshots and resets match card counts

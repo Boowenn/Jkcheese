@@ -17,7 +17,7 @@ def test_parse_docs_url_defaults_to_realtime_tab():
     assert tab_id == DEFAULT_TAB_ID
 
 
-def test_extract_s_lineups_uses_first_block_after_marker():
+def test_extract_s_lineups_includes_s_minus_block_after_marker():
     grid = {
         10: {8: "↑神器"},
         11: {0: "23新星\n薇古丝95", 4: "【阵容码】#23新星薇古丝95-小鱼一图流#abc"},
@@ -25,13 +25,16 @@ def test_extract_s_lineups_uses_first_block_after_marker():
         13: {0: "盗宗5牧羊 / 不刚需转", 4: "【阵容码】#盗宗57牧羊-公众号小鱼一图流#ghi"},
         14: {},
         15: {0: "装唐流 / 得会连胜", 4: "【阵容码】#装唐流-小鱼一图流#jkl"},
+        16: {},
+        17: {0: "低优先阵容", 4: "【阵容码】#低优先阵容#zzz"},
     }
 
     lineups = extract_s_lineups_from_grid(grid)
 
-    assert [lineup.name for lineup in lineups] == ["23新星 薇古丝95", "暗星机甲", "盗宗5牧羊"]
+    assert [lineup.name for lineup in lineups] == ["23新星 薇古丝95", "暗星机甲", "盗宗5牧羊", "装唐流"]
     assert lineups[1].notes == ("3幻/远征 需要偷3",)
     assert lineups[2].notes == ("不刚需转",)
+    assert [lineup.tier for lineup in lineups] == ["S", "S", "S", "S-"]
 
 
 def test_recommend_lineups_prioritizes_seen_tokens():

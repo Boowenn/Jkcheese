@@ -43,6 +43,8 @@ class AppConfig:
     auto_scan_interval_seconds: int = 12
     overlay_enabled: bool = True
     highlight_drag_enabled: bool = False
+    highlight_offset_x: int = 0
+    highlight_offset_y: int = 0
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -80,6 +82,8 @@ class AppConfig:
             payload.get("highlight_drag_enabled"),
             config.highlight_drag_enabled,
         )
+        config.highlight_offset_x = _safe_int(payload.get("highlight_offset_x"), config.highlight_offset_x, minimum=-5000)
+        config.highlight_offset_y = _safe_int(payload.get("highlight_offset_y"), config.highlight_offset_y, minimum=-5000)
         return config
 
     def save(self) -> None:
