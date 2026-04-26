@@ -6,6 +6,14 @@ import time
 from pathlib import Path
 
 from .advice import AdviceReport, build_advice
+from .card_tracker import (
+    DEFAULT_CARD_STATE_PATH,
+    CardTrackerError,
+    CoreAdviceReport,
+    build_core_advice,
+    format_core_advice,
+    reset_card_state,
+)
 from .gui import JkcheeseGui
 from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
 from .lineups import (
@@ -82,7 +90,35 @@ def build_parser() -> argparse.ArgumentParser:
     recommend_lineup.add_argument("--seen", nargs="*", default=[])
     recommend_lineup.add_argument("--limit", type=int, default=5)
 
+    core_advice = subparsers.add_parser(
+        "core-advice",
+        help="Track owned cards and recommend S-tier lineups from live tokens",
+    )
+    _add_core_advice_args(core_advice)
+
+    capture_core_advice = subparsers.add_parser(
+        "capture-core-advice",
+        help="Capture a screenshot, then print card warnings and S-tier lineup advice",
+    )
+    capture_core_advice.add_argument("--index", type=int, default=0)
+    capture_core_advice.add_argument("--output", type=Path, default=Path("captures") / "core")
+    capture_core_advice.add_argument("--launch-if-needed", action="store_true")
+    _add_core_advice_args(capture_core_advice)
+
+    reset_cards = subparsers.add_parser("reset-cards", help="Clear the local card count tracker")
+    reset_cards.add_argument("--state", type=Path, default=DEFAULT_CARD_STATE_PATH)
+
     return parser
+
+
+def _add_core_advice_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--source", default=DEFAULT_LINEUP_URL)
+    parser.add_argument("--seen", nargs="*", default=[], help="Current shop/trait/name tokens for lineup ranking")
+    parser.add_argument("--owned", nargs="*", default=[], help="Owned card counts, for example Vexx7 or Vex=7")
+    parser.add_argument("--state", type=Path, default=DEFAULT_CARD_STATE_PATH)
+    parser.add_argument("--mode", choices=("add", "replace"), default="add")
+    parser.add_argument("--reset", action="store_true", help="Start a fresh tracker before applying --owned")
+    parser.add_argument("--limit", type=int, default=5)
 
 
 def _print_readings(readings: list[OcrReading]) -> None:
@@ -121,6 +157,10 @@ def _print_lineup_recommendations(recommendations: tuple[LineupRecommendation, .
         print(f"  reason: {item.reason}")
         if lineup.code:
             print(f"  code: {lineup.code}")
+
+
+def _print_core_advice(report: CoreAdviceReport) -> None:
+    print(format_core_advice(report))
 
 
 def _export_debug_if_requested(image_path: Path, debug_output: Path | None) -> None:
@@ -170,6 +210,27 @@ def run_cli(args: argparse.Namespace) -> int:
         recommendations = recommend_lineups(lineups, tuple(args.seen), limit=args.limit)
         print(f"Recommendations from {len(lineups)} S-tier lineups.")
         _print_lineup_recommendations(recommendations)
+        return 0
+
+    if args.command == "core-advice":
+        lineups = fetch_jcc_s_lineups(args.source)
+        state_path = args.state if args.state.is_absolute() else Path.cwd() / args.state
+        report = build_core_advice(
+            state_path=state_path,
+            lineups=lineups,
+            seen=tuple(args.seen),
+            owned=tuple(args.owned),
+            mode=args.mode,
+            reset=args.reset,
+            limit=args.limit,
+        )
+        _print_core_advice(report)
+        return 0
+
+    if args.command == "reset-cards":
+        state_path = args.state if args.state.is_absolute() else Path.cwd() / args.state
+        reset_card_state(state_path)
+        print(f"Card tracker reset: {state_path.resolve()}")
         return 0
 
     client = LDPlayerClient(args.root)
@@ -253,6 +314,26 @@ def run_cli(args: argparse.Namespace) -> int:
         _export_debug_if_requested(saved, args.debug_output)
         return 0
 
+    if args.command == "capture-core-advice":
+        base_output = args.output if args.output.is_absolute() else Path.cwd() / args.output
+        session_dir = base_output / time.strftime("%Y%m%d_%H%M%S")
+        screenshot_path = session_dir / "screen.png"
+        saved = client.capture_screenshot(args.index, screenshot_path, launch_if_needed=args.launch_if_needed)
+        lineups = fetch_jcc_s_lineups(args.source)
+        state_path = args.state if args.state.is_absolute() else Path.cwd() / args.state
+        report = build_core_advice(
+            state_path=state_path,
+            lineups=lineups,
+            seen=tuple(args.seen),
+            owned=tuple(args.owned),
+            mode=args.mode,
+            reset=args.reset,
+            limit=args.limit,
+        )
+        print(f"Screenshot saved to: {saved}")
+        _print_core_advice(report)
+        return 0
+
     raise LDPlayerError(f"Unknown command: {args.command}")
 
 
@@ -265,6 +346,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {exc}")
         return 1
     except LineupSourceError as exc:
+        print(f"Error: {exc}")
+        return 1
+    except CardTrackerError as exc:
         print(f"Error: {exc}")
         return 1
     except KeyboardInterrupt:

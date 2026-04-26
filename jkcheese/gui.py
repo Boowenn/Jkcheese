@@ -8,6 +8,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from .advice import build_advice
+from .card_tracker import build_core_advice, format_core_advice, reset_card_state
 from .config import AppConfig
 from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
 from .lineups import fetch_jcc_s_lineups, recommend_lineups
@@ -21,8 +22,8 @@ class JkcheeseGui:
         self.config = AppConfig.load()
         self.root = tk.Tk()
         self.root.title(f"Jkcheese v{__version__}")
-        self.root.geometry("980x660")
-        self.root.minsize(940, 600)
+        self.root.geometry("1040x760")
+        self.root.minsize(980, 700)
 
         self.ldplayer_root_var = tk.StringVar(value=self.config.ldplayer_root)
         self.instance_var = tk.StringVar(value=str(self.config.instance_index))
@@ -37,6 +38,9 @@ class JkcheeseGui:
         self.last_reading_var = tk.StringVar(value="-")
         self.last_advice_var = tk.StringVar(value="-")
         self.last_lineups_var = tk.StringVar(value="-")
+        self.last_core_var = tk.StringVar(value="-")
+        self.live_tokens_var = tk.StringVar(value="")
+        self.owned_cards_var = tk.StringVar(value="")
         self._busy = False
 
         self._build_ui()
@@ -44,7 +48,7 @@ class JkcheeseGui:
 
     def _build_ui(self) -> None:
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(3, weight=1)
+        self.root.rowconfigure(4, weight=1)
 
         top = ttk.Frame(self.root, padding=16)
         top.grid(row=0, column=0, sticky="nsew")
@@ -77,6 +81,7 @@ class JkcheeseGui:
         self._add_status_row(status, 7, "Last Reading", self.last_reading_var)
         self._add_status_row(status, 8, "Last Advice", self.last_advice_var)
         self._add_status_row(status, 9, "S Lineups", self.last_lineups_var)
+        self._add_status_row(status, 10, "Core Advice", self.last_core_var)
 
         actions = ttk.LabelFrame(self.root, text="Actions", padding=16)
         actions.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 12))
@@ -104,8 +109,28 @@ class JkcheeseGui:
         for column in range(4):
             actions.columnconfigure(column, weight=1)
 
+        core = ttk.LabelFrame(self.root, text="Core Helper", padding=16)
+        core.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 12))
+        core.columnconfigure(1, weight=1)
+
+        ttk.Label(core, text="Live Tokens").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=3)
+        ttk.Entry(core, textvariable=self.live_tokens_var).grid(row=0, column=1, sticky="ew", pady=3)
+        ttk.Label(core, text="Owned Copies").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=3)
+        ttk.Entry(core, textvariable=self.owned_cards_var).grid(row=1, column=1, sticky="ew", pady=3)
+
+        self.core_button = ttk.Button(core, text="Core Advice", command=self.get_core_advice)
+        self.reset_cards_button = ttk.Button(core, text="Reset Card Counts", command=self.reset_card_counts)
+        self.core_button.grid(row=0, column=2, padx=(8, 0), pady=3, sticky="ew")
+        self.reset_cards_button.grid(row=1, column=2, padx=(8, 0), pady=3, sticky="ew")
+
+        hint = (
+            "Live tokens rank S lineups. Owned copies drive star warnings, e.g. Vexx7 or Vex=7. "
+            "This helper stays read-only."
+        )
+        ttk.Label(core, text=hint).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
         log_frame = ttk.LabelFrame(self.root, text="Log", padding=12)
-        log_frame.grid(row=3, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        log_frame.grid(row=4, column=0, sticky="nsew", padx=16, pady=(0, 16))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
@@ -157,6 +182,8 @@ class JkcheeseGui:
             self.read_button,
             self.advice_button,
             self.lineups_button,
+            self.core_button,
+            self.reset_cards_button,
             self.open_folder_button,
         ):
             button.configure(state=state)
@@ -344,10 +371,52 @@ class JkcheeseGui:
 
         self._run_task("Fetching S lineups", task)
 
+    def get_core_advice(self) -> None:
+        def task() -> str:
+            capture_dir = self._capture_dir()
+            state_path = capture_dir / "card_state.json"
+            lineups = fetch_jcc_s_lineups()
+            report = build_core_advice(
+                state_path=state_path,
+                lineups=lineups,
+                seen=self.live_tokens_var.get(),
+                owned=self.owned_cards_var.get(),
+                mode="add",
+                limit=5,
+            )
+
+            warning_summary = "; ".join(warning.title for warning in report.warnings[:3])
+            if not warning_summary:
+                warning_summary = "No upgrade warning"
+            lineup_summary = "; ".join(item.lineup.name for item in report.recommendations[:3])
+
+            self.root.after(0, lambda: self.last_core_var.set(warning_summary))
+            if lineup_summary:
+                self.root.after(0, lambda: self.last_lineups_var.set(lineup_summary))
+            self.root.after(0, lambda: self.owned_cards_var.set(""))
+            return format_core_advice(report)
+
+        self._run_task("Building core advice", task)
+
+    def reset_card_counts(self) -> None:
+        def task() -> str:
+            state_path = self._capture_dir() / "card_state.json"
+            reset_card_state(state_path)
+            self.root.after(0, lambda: self.last_core_var.set("Card counts reset"))
+            return f"Card tracker reset: {state_path}"
+
+        self._run_task("Resetting card counts", task)
+
     def open_capture_folder(self) -> None:
-        capture_dir = Path(self.capture_dir_var.get().strip())
+        capture_dir = self._capture_dir()
         capture_dir.mkdir(parents=True, exist_ok=True)
         os.startfile(str(capture_dir))
+
+    def _capture_dir(self) -> Path:
+        capture_dir_text = self.capture_dir_var.get().strip()
+        if not capture_dir_text:
+            raise LDPlayerError("Please choose a capture folder first.")
+        return Path(capture_dir_text)
 
     def _on_close(self) -> None:
         try:

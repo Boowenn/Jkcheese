@@ -88,3 +88,44 @@ def test_parser_reads_recommend_lineup_command():
     assert args.command == "recommend-lineup"
     assert args.seen == ["机甲", "远征"]
     assert args.limit == 2
+
+
+def test_parser_reads_core_advice_command():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "core-advice",
+            "--seen",
+            "Mecha",
+            "Vanguard",
+            "--owned",
+            "Vexx7",
+            "--mode",
+            "replace",
+            "--limit",
+            "3",
+        ]
+    )
+
+    assert args.command == "core-advice"
+    assert args.seen == ["Mecha", "Vanguard"]
+    assert args.owned == ["Vexx7"]
+    assert args.mode == "replace"
+    assert args.limit == 3
+
+
+def test_parser_reads_capture_core_advice_command():
+    parser = build_parser()
+    args = parser.parse_args(["capture-core-advice", "--index", "2", "--owned", "Vex=8"])
+
+    assert args.command == "capture-core-advice"
+    assert args.index == 2
+    assert args.owned == ["Vex=8"]
+
+
+def test_parser_reads_reset_cards_command():
+    parser = build_parser()
+    args = parser.parse_args(["reset-cards", "--state", "cards.json"])
+
+    assert args.command == "reset-cards"
+    assert str(args.state) == "cards.json"

@@ -15,6 +15,8 @@ Current module scope:
 - export OCR debug crops for calibration
 - fetch S-tier Golden Spatula lineups from the public `实时铲榜` Tencent Docs sheet
 - recommend S-tier lineups from live card/name tokens
+- track owned card copies and warn for pairs, two-star, and three-star progress
+- combine live tokens, owned cards, and current S-tier lineups into one core advice view
 - provide a simple Windows GUI
 - build a one-file EXE with PyInstaller
 - run unit tests
@@ -94,6 +96,24 @@ Recommend from S-tier lineups using live card/name tokens:
 python main.py recommend-lineup --seen 机甲 远征
 ```
 
+Get the core advice loop with S-tier recommendations and star warnings:
+
+```powershell
+python main.py core-advice --seen 机甲 远征 --owned 薇古丝x7 --reset
+```
+
+Track additional owned copies during the same game:
+
+```powershell
+python main.py core-advice --seen 机甲 --owned 薇古丝x1
+```
+
+Clear the local card count tracker between games:
+
+```powershell
+python main.py reset-cards
+```
+
 Build the EXE:
 
 ```powershell
@@ -121,7 +141,7 @@ py -3.14 -m pytest -q
 
 ## Current module
 
-`v0.5.0` includes the first five modules:
+`v0.6.0` includes the first six modules:
 
 - LDPlayer connection
 - game launch
@@ -132,11 +152,15 @@ py -3.14 -m pytest -q
 - lightweight local digit OCR for gold, level, and HP
 - confidence warnings, debug exports, and basic economy advice
 - read-only `实时铲榜` S-tier lineup fetching and token-based S lineup recommendation
+- card count tracking for owned copies
+- pair, two-star, seven/eight-copy, and three-star warnings
+- a GUI core helper panel for live tokens, owned copies, S-line recommendations, and upgrade warnings
 
 ## Next module
 
-The next planned module is live shop and upgrade warning support:
+The next planned module is automatic shop text recognition:
 
 - shop card recognition experiments
-- champion count tracking from read-only screenshots
-- three-star warning prompts for pairs, seven/eight copies, and contested reroll lines
+- feed recognized shop cards into the core advice tracker
+- calibrate card-name OCR/debug crops from live screenshots
+- keep all behavior read-only
