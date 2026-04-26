@@ -244,7 +244,7 @@ py -3.14 -m pytest -q
 
 ## Current module
 
-`v0.13.0` includes the first twelve modules:
+`v0.13.1` includes the first twelve modules plus a usability fix pass:
 
 - LDPlayer connection
 - game launch
@@ -275,6 +275,11 @@ py -3.14 -m pytest -q
 - module 11 stage/economy rhythm advice with `tempo` and `capture-tempo`
 - GUI Tempo Advice button and Scan Shop rhythm integration for level/save/small-D/all-in suggestions
 - one-click GUI scan that updates S lineup, star warnings, chase odds, item advice, tempo advice, and detailed logs together
+- automatic in-game shop scanning for the GUI, using a reusable `_live` screenshot so background scans do not flood the disk
+- right-top semi-transparent overlay for live "buy this slot", S lineup, chase risk, and tempo hints without switching away from the game
+- read-only live alerts only: the helper can tell you which visible slot to buy, but it never clicks, buys, rolls, or controls the game
+- automatic capture cleanup: generated screenshots are retained briefly during a match, and when the match appears to end the tool clears match screenshots and resets match card counts
+- single-instance GUI guard so double-clicking the EXE does not open two helper windows
 
 ## Next module
 

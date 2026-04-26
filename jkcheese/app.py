@@ -63,6 +63,7 @@ from .shop_recognition import (
     scan_shop,
 )
 from .shop_hits import build_shop_hit_alerts, format_shop_hit_alerts
+from .single_instance import SingleInstance, notify_already_running
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -383,8 +384,15 @@ def _export_debug_if_requested(image_path: Path, debug_output: Path | None) -> N
 
 def run_cli(args: argparse.Namespace) -> int:
     if args.command is None:
-        gui = JkcheeseGui()
-        gui.run()
+        guard = SingleInstance()
+        if not guard.acquire():
+            notify_already_running()
+            return 0
+        try:
+            gui = JkcheeseGui()
+            gui.run()
+        finally:
+            guard.release()
         return 0
 
     if args.command == "regions":
