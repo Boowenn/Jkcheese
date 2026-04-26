@@ -28,6 +28,8 @@ from .lineups import (
 from .ocr import OcrReading, export_ocr_debug, read_screenshot
 from .region_capture import crop_regions
 from .shop_recognition import (
+    DEFAULT_CHAMPION_DICTIONARY_PATH,
+    DEFAULT_NAME_OCR_THRESHOLD,
     DEFAULT_SHOP_TEMPLATE_PATH,
     DEFAULT_TEMPLATE_THRESHOLD,
     ShopRecognitionError,
@@ -36,6 +38,7 @@ from .shop_recognition import (
     parse_shop_labels,
     scan_shop,
 )
+from .shop_hits import build_shop_hit_alerts, format_shop_hit_alerts
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -122,7 +125,11 @@ def build_parser() -> argparse.ArgumentParser:
     shop_scan.add_argument("--input", type=Path, required=True)
     shop_scan.add_argument("--output", type=Path, default=Path("captures") / "shop_scan")
     shop_scan.add_argument("--templates", type=Path, default=DEFAULT_SHOP_TEMPLATE_PATH)
+    shop_scan.add_argument("--champions", type=Path, default=DEFAULT_CHAMPION_DICTIONARY_PATH)
+    shop_scan.add_argument("--candidate", nargs="*", default=[], help="Extra Chinese card-name OCR candidates")
     shop_scan.add_argument("--threshold", type=float, default=DEFAULT_TEMPLATE_THRESHOLD)
+    shop_scan.add_argument("--name-ocr-threshold", type=float, default=DEFAULT_NAME_OCR_THRESHOLD)
+    shop_scan.add_argument("--disable-name-ocr", action="store_true")
     shop_scan.add_argument("--no-debug", action="store_true")
 
     capture_shop_scan = subparsers.add_parser(
@@ -132,7 +139,11 @@ def build_parser() -> argparse.ArgumentParser:
     capture_shop_scan.add_argument("--index", type=int, default=0)
     capture_shop_scan.add_argument("--output", type=Path, default=Path("captures") / "shop_scan")
     capture_shop_scan.add_argument("--templates", type=Path, default=DEFAULT_SHOP_TEMPLATE_PATH)
+    capture_shop_scan.add_argument("--champions", type=Path, default=DEFAULT_CHAMPION_DICTIONARY_PATH)
+    capture_shop_scan.add_argument("--candidate", nargs="*", default=[], help="Extra Chinese card-name OCR candidates")
     capture_shop_scan.add_argument("--threshold", type=float, default=DEFAULT_TEMPLATE_THRESHOLD)
+    capture_shop_scan.add_argument("--name-ocr-threshold", type=float, default=DEFAULT_NAME_OCR_THRESHOLD)
+    capture_shop_scan.add_argument("--disable-name-ocr", action="store_true")
     capture_shop_scan.add_argument("--launch-if-needed", action="store_true")
     _add_core_advice_args(capture_shop_scan)
 
@@ -301,7 +312,11 @@ def run_cli(args: argparse.Namespace) -> int:
             args.input,
             output_dir=output,
             templates_path=args.templates,
+            champions_path=args.champions,
+            candidate_names=tuple(args.candidate),
+            enable_name_ocr=not args.disable_name_ocr,
             threshold=args.threshold,
+            name_ocr_threshold=args.name_ocr_threshold,
         )
         print(format_shop_scan(report))
         return 0
@@ -428,13 +443,18 @@ def run_cli(args: argparse.Namespace) -> int:
             saved,
             output_dir=session_dir / "shop",
             templates_path=args.templates,
+            champions_path=args.champions,
+            candidate_names=tuple(args.candidate),
+            enable_name_ocr=not args.disable_name_ocr,
             threshold=args.threshold,
+            name_ocr_threshold=args.name_ocr_threshold,
         )
         print(f"Screenshot saved to: {saved}")
         print(format_shop_scan(scan_report))
 
         lineups = fetch_jcc_s_lineups(args.source)
         state_path = args.state if args.state.is_absolute() else Path.cwd() / args.state
+        pool_sizes = _parse_pool_sizes(args.pool_sizes)
         seen_tokens = (*scan_report.recognized_names, *tuple(args.seen))
         core_report = build_core_advice(
             state_path=state_path,
@@ -445,8 +465,17 @@ def run_cli(args: argparse.Namespace) -> int:
             reset=args.reset,
             limit=args.limit,
             focus_costs=tuple(args.focus_costs),
-            pool_sizes=_parse_pool_sizes(args.pool_sizes),
+            pool_sizes=pool_sizes,
         )
+        hit_alerts = build_shop_hit_alerts(
+            scan_report,
+            core_report.state,
+            lineups=lineups,
+            focus_costs=tuple(args.focus_costs),
+            pool_sizes=pool_sizes,
+        )
+        print("")
+        print(format_shop_hit_alerts(hit_alerts))
         print("")
         _print_core_advice(core_report)
         return 0

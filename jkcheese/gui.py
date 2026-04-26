@@ -14,6 +14,7 @@ from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
 from .lineups import fetch_jcc_s_lineups, recommend_lineups
 from .ocr import read_screenshot
 from .region_capture import crop_regions
+from .shop_hits import build_shop_hit_alerts, format_shop_hit_alerts
 from .shop_recognition import format_shop_scan, scan_shop as scan_shop_screenshot
 from .version import __version__
 
@@ -415,6 +416,7 @@ class JkcheeseGui:
                 saved,
                 output_dir=session_dir / "shop",
                 templates_path=capture_dir / "shop_templates.json",
+                champions_path=capture_dir / "champions.json",
             )
             lineups = fetch_jcc_s_lineups()
             core_report = build_core_advice(
@@ -425,12 +427,20 @@ class JkcheeseGui:
                 mode="add",
                 limit=5,
             )
+            hit_alerts = build_shop_hit_alerts(report, core_report.state, lineups=lineups)
             lineup_summary = "; ".join(item.lineup.name for item in core_report.recommendations[:3])
             shop_summary = ", ".join(report.recognized_names) if report.recognized_names else "No named shop cards"
+            hit_summary = "; ".join(f"槽位{alert.slot} {alert.name}" for alert in hit_alerts[:3])
             self.root.after(0, lambda: self.last_capture_var.set(str(saved)))
             self.root.after(0, lambda: self.last_lineups_var.set(lineup_summary or "-"))
-            self.root.after(0, lambda: self.last_core_var.set(shop_summary))
-            return format_shop_scan(report) + "\n\n" + format_core_advice(core_report)
+            self.root.after(0, lambda: self.last_core_var.set(hit_summary or shop_summary))
+            return (
+                format_shop_scan(report)
+                + "\n\n"
+                + format_shop_hit_alerts(hit_alerts)
+                + "\n\n"
+                + format_core_advice(core_report)
+            )
 
         self._run_task("Scanning shop", task)
 

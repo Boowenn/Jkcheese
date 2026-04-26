@@ -18,6 +18,8 @@ Current module scope:
 - track owned card copies and warn for cost-aware 4/5-cost star progress
 - combine live tokens, owned cards, and current S-tier lineups into one core advice view
 - scan shop slots, export shop debug crops, and recognize locally labeled shop templates
+- recognize Chinese shop card names with local offline candidate OCR
+- warn immediately when a shop card is a tracked two-star/three-star hit or S-lineup key card
 - provide a simple Windows GUI
 - build a one-file EXE with PyInstaller
 - run unit tests
@@ -144,6 +146,18 @@ Capture the current emulator screen, scan the shop, and feed recognized shop nam
 python main.py capture-shop-scan --index 0 --launch-if-needed
 ```
 
+Trigger a shop-hit reminder from your tracked copies, for example when buying the visible card would complete a three-star:
+
+```powershell
+python main.py capture-shop-scan --index 0 --launch-if-needed --owned 卡莎@3x8 --reset
+```
+
+Module 7 uses two local recognition paths: labeled card-art templates first, then offline Chinese name OCR from a candidate list. You can extend the OCR candidates without changing code by creating `captures\champions.json`:
+
+```json
+{"champions": [{"name": "自定义棋子"}]}
+```
+
 Build the EXE:
 
 ```powershell
@@ -171,7 +185,7 @@ py -3.14 -m pytest -q
 
 ## Current module
 
-`v0.7.0` includes the first seven modules:
+`v0.8.0` includes the first seven modules plus shop-hit reminders:
 
 - LDPlayer connection
 - game launch
@@ -189,13 +203,17 @@ py -3.14 -m pytest -q
 - shop slot occupancy detection
 - shop cost digit reading
 - local card-template labeling and recognition with `shop-label`, `shop-scan`, and `capture-shop-scan`
+- offline Chinese shop-name OCR for common champion names
+- shop-hit alerts that say when to buy a visible card because it completes a two-star, pushes a four/five-cost chase, or matches an S-tier lineup
 - GUI Scan Shop button that feeds recognized shop names into the S-line recommendation flow
 
 ## Next module
 
-The next planned module is stronger live recognition and game-state awareness:
+The next planned module is the four/five-cost chase calculator and richer game-state awareness:
 
-- improve direct card-name OCR beyond local templates
-- add shop-hit alerts when a visible shop card completes a tracked two-star or three-star
+- estimate whether a 4-cost or 5-cost three-star chase is realistic from level, gold, owned copies, and suspected contested copies
 - add opponent/contested-card screenshot checks
+- add main carry/tank and item reminders from the current S-lineup source
+- add stage and economy rhythm suggestions
+- simplify the Chinese EXE layout into a left screenshot status / right recommendation dashboard
 - keep all behavior read-only

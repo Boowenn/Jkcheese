@@ -1,24 +1,123 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import json
 from pathlib import Path
 import re
 from typing import Iterable
 
-from PIL import Image, ImageStat
+from PIL import Image, ImageDraw, ImageFont, ImageStat
 
 from .ocr import _components, _recognize_digit
 from .regions import RegionPreset, default_preset
 
 
 DEFAULT_SHOP_TEMPLATE_PATH = Path("captures") / "shop_templates.json"
+DEFAULT_CHAMPION_DICTIONARY_PATH = Path("captures") / "champions.json"
 SHOP_SLOT_COUNT = 5
 SHOP_SLOT_NAMES = tuple(f"shop_slot_{index}" for index in range(1, SHOP_SLOT_COUNT + 1))
 SIGNATURE_SIZE = (16, 16)
+NAME_SIGNATURE_SIZE = (96, 32)
 OCCUPIED_STDDEV_THRESHOLD = 14.0
 DEFAULT_TEMPLATE_THRESHOLD = 0.92
+DEFAULT_NAME_OCR_THRESHOLD = 0.63
+DEFAULT_NAME_OCR_MARGIN = 0.015
 LABEL_RE = re.compile(r"^(?P<slot>[1-5])\s*[=:]\s*(?P<name>[^:@=]+?)(?:\s*[:@]\s*(?P<cost>[1-5]))?$")
+
+DEFAULT_CHAMPION_NAMES = (
+    "潘森",
+    "俄洛伊",
+    "茂凯",
+    "厄加特",
+    "卡莎",
+    "丽桑卓",
+    "雷克塞",
+    "薇古丝",
+    "娜美",
+    "安妮",
+    "波比",
+    "塔姆",
+    "维克托",
+    "小鱼人",
+    "菲兹",
+    "拉克丝",
+    "盖伦",
+    "亚托克斯",
+    "阿狸",
+    "阿卡丽",
+    "卡特琳娜",
+    "艾克",
+    "艾希",
+    "卢锡安",
+    "希维尔",
+    "伊泽瑞尔",
+    "凯特琳",
+    "金克丝",
+    "蔚",
+    "薇恩",
+    "锐雯",
+    "瑟提",
+    "孙悟空",
+    "李青",
+    "嘉文四世",
+    "墨菲特",
+    "布里茨",
+    "布隆",
+    "慎",
+    "赵信",
+    "贾克斯",
+    "沃里克",
+    "德莱厄斯",
+    "德莱文",
+    "莎弥拉",
+    "霞",
+    "洛",
+    "悠米",
+    "妮蔻",
+    "佐伊",
+    "辛德拉",
+    "乐芙兰",
+    "妖姬",
+    "泽拉斯",
+    "奥莉安娜",
+    "库奇",
+    "兰博",
+    "凯南",
+    "崔丝塔娜",
+    "吉格斯",
+    "莫甘娜",
+    "凯尔",
+    "凯隐",
+    "千珏",
+    "烬",
+    "奎桑提",
+    "亚索",
+    "永恩",
+    "诺提勒斯",
+    "奇亚娜",
+    "奎因",
+    "艾瑞莉娅",
+    "刀妹",
+    "塞拉斯",
+    "加里奥",
+    "科加斯",
+    "雷克顿",
+    "内瑟斯",
+    "婕拉",
+    "尼菈",
+    "莉莉娅",
+    "阿木木",
+    "蒙多",
+    "萨勒芬妮",
+    "娑娜",
+    "卡尔玛",
+    "厄斐琉斯",
+    "佛耶戈",
+    "卑尔维斯",
+    "索拉卡",
+    "贝蕾亚",
+)
 
 
 class ShopRecognitionError(RuntimeError):
@@ -59,6 +158,7 @@ class ShopScanReport:
     slots: tuple[ShopSlotReading, ...]
     templates_path: Path
     template_count: int
+    candidate_count: int = 0
 
     @property
     def recognized_names(self) -> tuple[str, ...]:
@@ -74,12 +174,21 @@ def scan_shop(
     *,
     output_dir: Path | None = None,
     templates_path: Path = DEFAULT_SHOP_TEMPLATE_PATH,
+    champions_path: Path | None = DEFAULT_CHAMPION_DICTIONARY_PATH,
+    candidate_names: Iterable[str] = (),
+    enable_name_ocr: bool = True,
     preset: RegionPreset | None = None,
     threshold: float = DEFAULT_TEMPLATE_THRESHOLD,
+    name_ocr_threshold: float = DEFAULT_NAME_OCR_THRESHOLD,
 ) -> ShopScanReport:
     preset = preset or default_preset()
     templates_path = _resolve_path(templates_path)
     templates = load_shop_templates(templates_path)
+    name_candidates = (
+        load_champion_names(champions_path, extra=(*candidate_names, *(template.name for template in templates)))
+        if enable_name_ocr
+        else ()
+    )
     output_dir = _resolve_path(output_dir) if output_dir is not None else None
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -90,7 +199,7 @@ def scan_shop(
         source = image.convert("RGB")
         for slot, region_name in enumerate(SHOP_SLOT_NAMES, start=1):
             crop = source.crop(preset.get(region_name).box_for(source.size, preset.base_size))
-            reading = _scan_slot(slot, crop, templates, threshold)
+            reading = _scan_slot(slot, crop, templates, threshold, name_candidates, name_ocr_threshold)
             readings.append(_export_slot_debug(reading, crop, image_path, output_dir))
 
     return ShopScanReport(
@@ -99,6 +208,7 @@ def scan_shop(
         slots=tuple(readings),
         templates_path=templates_path,
         template_count=len(templates),
+        candidate_count=len(name_candidates),
     )
 
 
@@ -166,6 +276,23 @@ def load_shop_templates(path: Path = DEFAULT_SHOP_TEMPLATE_PATH) -> tuple[ShopTe
     return tuple(templates)
 
 
+def load_champion_names(
+    path: Path | None = DEFAULT_CHAMPION_DICTIONARY_PATH,
+    *,
+    extra: Iterable[str] = (),
+) -> tuple[str, ...]:
+    names: list[str] = [*DEFAULT_CHAMPION_NAMES]
+    path = _resolve_path(path)
+    if path is not None and path.exists():
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ShopRecognitionError(f"Could not read champion dictionary: {path}") from exc
+        names.extend(_extract_champion_names(payload))
+    names.extend(str(value) for value in extra)
+    return _unique_names(names)
+
+
 def save_shop_templates(templates: tuple[ShopTemplate, ...], path: Path = DEFAULT_SHOP_TEMPLATE_PATH) -> None:
     path = _resolve_path(path)
     payload = {
@@ -203,6 +330,8 @@ def format_shop_scan(report: ShopScanReport) -> str:
         f"Shop scan: {report.image_path}",
         f"Templates: {report.template_count} from {report.templates_path}",
     ]
+    if report.candidate_count:
+        lines.append(f"Name OCR candidates: {report.candidate_count}")
     if report.output_dir is not None:
         lines.append(f"Debug exported to: {report.output_dir}")
 
@@ -225,6 +354,8 @@ def _scan_slot(
     crop: Image.Image,
     templates: tuple[ShopTemplate, ...],
     threshold: float,
+    name_candidates: tuple[str, ...],
+    name_ocr_threshold: float,
 ) -> ShopSlotReading:
     occupied = _is_occupied(crop)
     if not occupied:
@@ -240,6 +371,17 @@ def _scan_slot(
             cost=cost if cost is not None else best_template.cost,
             confidence=round(confidence, 3),
             source="template",
+        )
+
+    name, ocr_confidence = _recognize_name_by_rendering(crop, name_candidates, name_ocr_threshold)
+    if name:
+        return ShopSlotReading(
+            slot=slot,
+            occupied=True,
+            name=name,
+            cost=cost,
+            confidence=round(ocr_confidence, 3),
+            source="name-ocr",
         )
 
     return ShopSlotReading(slot=slot, occupied=True, cost=cost, confidence=round(confidence, 3), source="unknown")
@@ -296,6 +438,106 @@ def _best_template(crop: Image.Image, templates: tuple[ShopTemplate, ...]) -> tu
     return best_template, best_score
 
 
+def _recognize_name_by_rendering(
+    crop: Image.Image,
+    candidates: tuple[str, ...],
+    threshold: float,
+) -> tuple[str, float]:
+    if not candidates:
+        return "", 0.0
+
+    actual = _normalize_name_mask(_name_mask(_name_crop(crop)))
+    if actual.getbbox() is None:
+        return "", 0.0
+
+    best_by_name: dict[str, float] = {}
+    for name, template in _rendered_name_templates(candidates):
+        score = 1.0 - _difference_score(actual, template)
+        if score > best_by_name.get(name, 0.0):
+            best_by_name[name] = score
+
+    if not best_by_name:
+        return "", 0.0
+
+    ranked = sorted(best_by_name.items(), key=lambda item: item[1], reverse=True)
+    best_name, best_score = ranked[0]
+    second_score = ranked[1][1] if len(ranked) > 1 else 0.0
+    if best_score < threshold:
+        return "", best_score
+    if second_score and best_score - second_score < DEFAULT_NAME_OCR_MARGIN:
+        return "", best_score
+    return best_name, best_score
+
+
+@lru_cache(maxsize=16)
+def _rendered_name_templates(candidates: tuple[str, ...]) -> tuple[tuple[str, Image.Image], ...]:
+    templates: list[tuple[str, Image.Image]] = []
+    font_paths = _name_font_candidates()
+    if not font_paths:
+        return ()
+
+    for name in candidates:
+        for font_path in font_paths:
+            for size in range(18, 30, 2):
+                templates.append((name, _normalize_name_mask(_render_name(name, font_path, size))))
+    return tuple(templates)
+
+
+def _render_name(name: str, font_path: Path, size: int) -> Image.Image:
+    image = Image.new("L", (220, 64), 0)
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.truetype(str(font_path), size)
+    draw.text((0, 0), name, fill=255, font=font)
+    return image.point(lambda pixel: 255 if pixel > 20 else 0).convert("1")
+
+
+def _name_font_candidates() -> tuple[Path, ...]:
+    candidates = (
+        Path(r"C:\Windows\Fonts\msyhbd.ttc"),
+        Path(r"C:\Windows\Fonts\msyh.ttc"),
+        Path(r"C:\Windows\Fonts\simhei.ttf"),
+        Path(r"C:\Windows\Fonts\simsun.ttc"),
+        Path(r"C:\Windows\Fonts\dengb.ttf"),
+    )
+    return tuple(path for path in candidates if path.exists())
+
+
+def _name_mask(image: Image.Image) -> Image.Image:
+    source = image.convert("RGB")
+    output = Image.new("1", source.size, 0)
+    source_pixels = source.load()
+    output_pixels = output.load()
+    for y in range(source.height):
+        for x in range(source.width):
+            r, g, b = source_pixels[x, y]
+            if r > 150 and g > 145 and b > 130 and max(r, g, b) - min(r, g, b) < 95:
+                output_pixels[x, y] = 1
+
+    cleaned = Image.new("1", source.size, 0)
+    for component in _components(output):
+        if component.area < 3:
+            continue
+        cleaned.paste(component.image, component.box)
+    return cleaned
+
+
+def _normalize_name_mask(mask: Image.Image, size: tuple[int, int] = NAME_SIGNATURE_SIZE) -> Image.Image:
+    bbox = mask.getbbox()
+    if bbox is None:
+        return Image.new("1", size, 0)
+
+    crop = mask.crop(bbox).convert("L")
+    target_width, target_height = size
+    scale = min((target_width - 4) / crop.width, (target_height - 4) / crop.height)
+    new_size = (max(1, round(crop.width * scale)), max(1, round(crop.height * scale)))
+    crop = crop.resize(new_size, Image.Resampling.LANCZOS)
+    crop = crop.point(lambda pixel: 255 if pixel > 80 else 0).convert("1")
+
+    output = Image.new("1", size, 0)
+    output.paste(crop, ((target_width - new_size[0]) // 2, (target_height - new_size[1]) // 2))
+    return output
+
+
 def _is_occupied(crop: Image.Image) -> bool:
     art = _art_crop(crop).convert("L")
     stddev = ImageStat.Stat(art).stddev[0]
@@ -326,6 +568,25 @@ def _similarity(a: tuple[int, ...], b: tuple[int, ...]) -> float:
         return 0.0
     diff = sum(abs(left - right) for left, right in zip(a, b)) / (len(a) * 255)
     return max(0.0, min(1.0, 1.0 - diff))
+
+
+def _difference_score(a: Image.Image, b: Image.Image) -> float:
+    a_pixels = a.load()
+    b_pixels = b.load()
+    width, height = a.size
+    diff = 0
+    active = 0
+
+    for y in range(height):
+        for x in range(width):
+            av = bool(a_pixels[x, y])
+            bv = bool(b_pixels[x, y])
+            if av != bv:
+                diff += 1
+            if av or bv:
+                active += 1
+
+    return diff / (active or 1)
 
 
 def _art_crop(crop: Image.Image) -> Image.Image:
@@ -377,6 +638,33 @@ def _normalize_cost(value: object) -> int | None:
     except (TypeError, ValueError):
         return None
     return cost if cost in range(1, 6) else None
+
+
+def _extract_champion_names(payload: object) -> tuple[str, ...]:
+    if isinstance(payload, dict):
+        raw_values = payload.get("champions", payload.get("names", []))
+    else:
+        raw_values = payload
+
+    names: list[str] = []
+    if isinstance(raw_values, list):
+        for value in raw_values:
+            if isinstance(value, str):
+                names.append(value)
+            elif isinstance(value, dict):
+                name = value.get("name")
+                if isinstance(name, str):
+                    names.append(name)
+    return tuple(names)
+
+
+def _unique_names(values: Iterable[str]) -> tuple[str, ...]:
+    names: list[str] = []
+    for value in values:
+        cleaned = str(value).strip()
+        if cleaned and cleaned not in names:
+            names.append(cleaned)
+    return tuple(names)
 
 
 def _resolve_path(path: Path | None) -> Path | None:

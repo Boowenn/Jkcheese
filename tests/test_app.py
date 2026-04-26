@@ -140,11 +140,28 @@ def test_parser_reads_reset_cards_command():
 
 def test_parser_reads_shop_scan_command():
     parser = build_parser()
-    args = parser.parse_args(["shop-scan", "--input", "screen.png", "--templates", "templates.json"])
+    args = parser.parse_args(
+        [
+            "shop-scan",
+            "--input",
+            "screen.png",
+            "--templates",
+            "templates.json",
+            "--champions",
+            "champions.json",
+            "--candidate",
+            "潘森",
+            "--name-ocr-threshold",
+            "0.7",
+        ]
+    )
 
     assert args.command == "shop-scan"
     assert str(args.input) == "screen.png"
     assert str(args.templates) == "templates.json"
+    assert str(args.champions) == "champions.json"
+    assert args.candidate == ["潘森"]
+    assert args.name_ocr_threshold == 0.7
 
 
 def test_parser_reads_capture_shop_scan_command():

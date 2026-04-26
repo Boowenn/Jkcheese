@@ -8,6 +8,7 @@ from jkcheese.regions import default_preset
 from jkcheese.shop_recognition import (
     format_shop_scan,
     label_shop_templates,
+    load_champion_names,
     parse_shop_labels,
     scan_shop,
 )
@@ -23,7 +24,12 @@ def test_shop_scan_detects_occupied_and_empty_slots(tmp_path):
     screen = tmp_path / "screen.png"
     _make_shop_screen(screen, occupied_slots={2: ("丽桑卓", 1)})
 
-    report = scan_shop(screen, output_dir=tmp_path / "debug", templates_path=tmp_path / "templates.json")
+    report = scan_shop(
+        screen,
+        output_dir=tmp_path / "debug",
+        templates_path=tmp_path / "templates.json",
+        enable_name_ocr=False,
+    )
 
     assert report.slots[0].occupied is False
     assert report.slots[1].occupied is True
@@ -45,6 +51,24 @@ def test_shop_template_label_enables_name_recognition(tmp_path):
     assert report.slots[1].cost == 1
     assert report.slots[4].name == "雷克塞"
     assert "丽桑卓" in format_shop_scan(report)
+
+
+def test_shop_name_ocr_recognizes_default_chinese_candidate(tmp_path):
+    screen = tmp_path / "screen.png"
+    _make_shop_screen(screen, occupied_slots={2: ("潘森", 2)})
+
+    report = scan_shop(screen, templates_path=tmp_path / "templates.json", champions_path=tmp_path / "missing.json")
+
+    assert report.slots[1].name == "潘森"
+    assert report.slots[1].source == "name-ocr"
+    assert "Name OCR candidates" in format_shop_scan(report)
+
+
+def test_champion_dictionary_adds_custom_name(tmp_path):
+    dictionary = tmp_path / "champions.json"
+    dictionary.write_text('{"champions": [{"name": "测试棋子"}]}', encoding="utf-8")
+
+    assert "测试棋子" in load_champion_names(dictionary)
 
 
 def _make_shop_screen(path: Path, occupied_slots: dict[int, tuple[str, int]]) -> None:
