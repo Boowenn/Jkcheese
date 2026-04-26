@@ -7,6 +7,8 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from PIL import Image, ImageTk
+
 from .advice import build_advice
 from .card_tracker import build_core_advice, format_core_advice, load_card_state, reset_card_state
 from .chase_calculator import build_chase_reports_from_state, format_chase_reports, visible_counts_from_shop
@@ -15,12 +17,21 @@ from .economy import build_economy_rhythm, format_economy_rhythm
 from .item_advice import build_item_advice, format_item_advice
 from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
 from .lineups import fetch_jcc_s_lineups, recommend_lineups
-from .ocr import read_screenshot
+from .ocr import OcrReading, read_screenshot
 from .opponent_monitor import format_opponent_scout, scan_opponent
 from .region_capture import crop_regions
 from .shop_hits import build_shop_hit_alerts, format_shop_hit_alerts
 from .shop_recognition import format_shop_scan, scan_shop as scan_shop_screenshot
 from .version import __version__
+
+
+PANEL_FONT = ("Microsoft YaHei UI", 10)
+TITLE_FONT = ("Microsoft YaHei UI", 18, "bold")
+SUBTITLE_FONT = ("Microsoft YaHei UI", 10)
+CARD_BG = "#fffaf0"
+ROOT_BG = "#efe6d2"
+DARK_BG = "#17362f"
+ACCENT = "#c77b2a"
 
 
 def _reading_value(readings, name: str) -> int | None:
@@ -37,25 +48,71 @@ def _reading_text(readings, name: str) -> str:
     return ""
 
 
+def format_reading_summary(readings: list[OcrReading] | tuple[OcrReading, ...]) -> str:
+    names = {"stage": "阶段", "level": "等级", "gold": "金币", "player_hp": "血量"}
+    parts: list[str] = []
+    for reading in readings:
+        if reading.name not in names:
+            continue
+        value = reading.text or "?"
+        parts.append(f"{names[reading.name]}={value}({reading.confidence:.2f})")
+    return "  ".join(parts) if parts else "暂未读取"
+
+
+def format_lineup_panel(core_report) -> str:
+    lines = ["S 阵容推荐"]
+    if not core_report.recommendations:
+        lines.append("- 暂无推荐，先扫描商店或点击 S 阵容。")
+        return "\n".join(lines)
+    for index, item in enumerate(core_report.recommendations[:5], start=1):
+        matched = f" | 命中: {', '.join(item.matched_tokens)}" if item.matched_tokens else ""
+        notes = f" | 备注: {'; '.join(item.lineup.notes)}" if item.lineup.notes else ""
+        lines.append(f"{index}. [{item.lineup.tier}] {item.lineup.name}  分数 {item.score}{matched}{notes}")
+    return "\n".join(lines)
+
+
+def format_star_panel(core_report, hit_alerts=()) -> str:
+    lines = ["三星警告 / 商店必买"]
+    if hit_alerts:
+        lines.append("商店提醒:")
+        for alert in hit_alerts[:5]:
+            cost = f"{alert.cost}费" if alert.cost is not None else "费用未知"
+            lines.append(f"- [{alert.severity}] 槽位{alert.slot} {alert.name}({cost})：{alert.title}")
+    else:
+        lines.append("商店提醒: 暂无必须买的关键牌。")
+
+    if core_report.warnings:
+        lines.append("")
+        lines.append("已记录棋子:")
+        for warning in core_report.warnings[:6]:
+            related = f" | S 阵容: {', '.join(warning.matched_lineups)}" if warning.matched_lineups else ""
+            lines.append(f"- [{warning.severity}] {warning.title}{related}")
+    else:
+        lines.append("")
+        lines.append("已记录棋子: 暂无 4/5 费三星追踪警告。")
+    return "\n".join(lines)
+
+
 class JkcheeseGui:
     def __init__(self) -> None:
         self.config = AppConfig.load()
         self.root = tk.Tk()
-        self.root.title(f"Jkcheese v{__version__}")
-        self.root.geometry("1040x800")
-        self.root.minsize(980, 700)
+        self.root.title(f"金铲铲只读助手 Jkcheese v{__version__}")
+        self.root.geometry("1320x860")
+        self.root.minsize(1180, 760)
+        self.root.configure(bg=ROOT_BG)
 
         self.ldplayer_root_var = tk.StringVar(value=self.config.ldplayer_root)
         self.instance_var = tk.StringVar(value=str(self.config.instance_index))
         self.capture_dir_var = tk.StringVar(value=self.config.capture_dir)
-        self.status_var = tk.StringVar(value="Ready")
+        self.status_var = tk.StringVar(value="准备就绪")
         self.instance_name_var = tk.StringVar(value="-")
         self.game_installed_var = tk.StringVar(value="-")
         self.game_process_var = tk.StringVar(value="-")
         self.apk_path_var = tk.StringVar(value="-")
         self.last_capture_var = tk.StringVar(value="-")
         self.last_regions_var = tk.StringVar(value="-")
-        self.last_reading_var = tk.StringVar(value="-")
+        self.last_reading_var = tk.StringVar(value="暂未读取")
         self.last_advice_var = tk.StringVar(value="-")
         self.last_lineups_var = tk.StringVar(value="-")
         self.last_core_var = tk.StringVar(value="-")
@@ -64,131 +121,267 @@ class JkcheeseGui:
         self.live_tokens_var = tk.StringVar(value="")
         self.owned_cards_var = tk.StringVar(value="")
         self.item_components_var = tk.StringVar(value="")
+        self.stage_value_var = tk.StringVar(value="?")
+        self.level_value_var = tk.StringVar(value="?")
+        self.gold_value_var = tk.StringVar(value="?")
+        self.hp_value_var = tk.StringVar(value="?")
         self._busy = False
+        self._preview_image = None
+        self._panels: dict[str, tk.Text] = {}
 
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(4, weight=1)
+        self._configure_styles()
+        self.root.columnconfigure(0, weight=0, minsize=430)
+        self.root.columnconfigure(1, weight=1)
+        self.root.rowconfigure(1, weight=1)
 
-        top = ttk.Frame(self.root, padding=16)
-        top.grid(row=0, column=0, sticky="nsew")
-        top.columnconfigure(1, weight=1)
+        header = tk.Frame(self.root, bg=DARK_BG, padx=20, pady=14)
+        header.grid(row=0, column=0, columnspan=2, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        tk.Label(
+            header,
+            text="金铲铲只读助手",
+            bg=DARK_BG,
+            fg="#fff7e4",
+            font=TITLE_FONT,
+        ).grid(row=0, column=0, sticky="w")
+        tk.Label(
+            header,
+            text="一键看清：截图状态、S 阵容、三星警告、追三概率、装备主 C、当前节奏",
+            bg=DARK_BG,
+            fg="#d8e6dc",
+            font=SUBTITLE_FONT,
+        ).grid(row=1, column=0, sticky="w", pady=(3, 0))
+        self.primary_button = tk.Button(
+            header,
+            text="一键扫描当前局势",
+            command=self.scan_shop,
+            bg=ACCENT,
+            fg="white",
+            activebackground="#ad651f",
+            activeforeground="white",
+            relief="flat",
+            padx=18,
+            pady=8,
+            font=("Microsoft YaHei UI", 11, "bold"),
+        )
+        self.primary_button.grid(row=0, column=1, rowspan=2, sticky="e")
 
-        ttk.Label(top, text="LDPlayer Root").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        ttk.Entry(top, textvariable=self.ldplayer_root_var).grid(row=0, column=1, sticky="ew")
-        ttk.Button(top, text="Browse", command=self._pick_ldplayer_root).grid(row=0, column=2, padx=(8, 0))
+        left = tk.Frame(self.root, bg=ROOT_BG, padx=14, pady=14)
+        left.grid(row=1, column=0, sticky="nsew")
+        left.columnconfigure(0, weight=1)
 
-        ttk.Label(top, text="Instance").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(10, 0))
-        ttk.Spinbox(top, from_=0, to=32, textvariable=self.instance_var, width=8).grid(
-            row=1, column=1, sticky="w", pady=(10, 0)
+        right = tk.Frame(self.root, bg="#f7f1e3", padx=14, pady=14)
+        right.grid(row=1, column=1, sticky="nsew")
+        right.columnconfigure(0, weight=1)
+        right.columnconfigure(1, weight=1)
+        right.rowconfigure(3, weight=1)
+
+        self._build_connection_card(left)
+        self._build_snapshot_card(left)
+        self._build_inputs_card(left)
+        self._build_right_dashboard(right)
+
+    def _configure_styles(self) -> None:
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure("TLabel", font=PANEL_FONT, background=CARD_BG, foreground="#26352f")
+        style.configure("TButton", font=PANEL_FONT, padding=6)
+        style.configure("TEntry", font=PANEL_FONT)
+        style.configure("TSpinbox", font=PANEL_FONT)
+
+    def _card(self, parent: tk.Widget, title: str) -> tk.Frame:
+        outer = tk.Frame(parent, bg=ROOT_BG)
+        outer.grid(sticky="ew", pady=(0, 12))
+        outer.columnconfigure(0, weight=1)
+        tk.Label(
+            outer,
+            text=title,
+            bg=ROOT_BG,
+            fg="#1c332d",
+            font=("Microsoft YaHei UI", 12, "bold"),
+        ).grid(row=0, column=0, sticky="w", pady=(0, 4))
+        card = tk.Frame(outer, bg=CARD_BG, padx=12, pady=12, highlightbackground="#dfc9a5", highlightthickness=1)
+        card.grid(row=1, column=0, sticky="ew")
+        card.columnconfigure(1, weight=1)
+        return card
+
+    def _build_connection_card(self, parent: tk.Widget) -> None:
+        card = self._card(parent, "连接与路径")
+        tk.Label(card, text="雷电目录", bg=CARD_BG, font=PANEL_FONT).grid(row=0, column=0, sticky="w", pady=3)
+        ttk.Entry(card, textvariable=self.ldplayer_root_var).grid(row=0, column=1, sticky="ew", pady=3, padx=(8, 4))
+        ttk.Button(card, text="选择", command=self._pick_ldplayer_root).grid(row=0, column=2, pady=3)
+
+        tk.Label(card, text="实例编号", bg=CARD_BG, font=PANEL_FONT).grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Spinbox(card, from_=0, to=32, textvariable=self.instance_var, width=8).grid(
+            row=1, column=1, sticky="w", pady=3, padx=(8, 4)
         )
 
-        ttk.Label(top, text="Capture Folder").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(10, 0))
-        ttk.Entry(top, textvariable=self.capture_dir_var).grid(row=2, column=1, sticky="ew", pady=(10, 0))
-        ttk.Button(top, text="Browse", command=self._pick_capture_dir).grid(row=2, column=2, padx=(8, 0), pady=(10, 0))
+        tk.Label(card, text="截图目录", bg=CARD_BG, font=PANEL_FONT).grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Entry(card, textvariable=self.capture_dir_var).grid(row=2, column=1, sticky="ew", pady=3, padx=(8, 4))
+        ttk.Button(card, text="选择", command=self._pick_capture_dir).grid(row=2, column=2, pady=3)
 
-        status = ttk.LabelFrame(self.root, text="Status", padding=16)
-        status.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 12))
+        button_bar = tk.Frame(card, bg=CARD_BG)
+        button_bar.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(8, 2))
+        for col in range(3):
+            button_bar.columnconfigure(col, weight=1)
+        self.refresh_button = ttk.Button(button_bar, text="刷新状态", command=self.refresh_status)
+        self.launch_button = ttk.Button(button_bar, text="启动模拟器", command=self.launch_instance)
+        self.run_game_button = ttk.Button(button_bar, text="启动游戏", command=self.launch_game)
+        self.refresh_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.launch_button.grid(row=0, column=1, sticky="ew", padx=4)
+        self.run_game_button.grid(row=0, column=2, sticky="ew", padx=(4, 0))
+
+        self.open_folder_button = ttk.Button(card, text="打开截图目录", command=self.open_capture_folder)
+        self.open_folder_button.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+
+        status = tk.Frame(card, bg="#f0e6d2", padx=8, pady=8)
+        status.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         status.columnconfigure(1, weight=1)
+        self._status_line(status, 0, "状态", self.status_var)
+        self._status_line(status, 1, "模拟器", self.instance_name_var)
+        self._status_line(status, 2, "游戏", self.game_process_var)
+        self._status_line(status, 3, "APK", self.apk_path_var)
 
-        self._add_status_row(status, 0, "State", self.status_var)
-        self._add_status_row(status, 1, "Instance Name", self.instance_name_var)
-        self._add_status_row(status, 2, "Game Installed", self.game_installed_var)
-        self._add_status_row(status, 3, "Game Process", self.game_process_var)
-        self._add_status_row(status, 4, "APK Path", self.apk_path_var)
-        self._add_status_row(status, 5, "Last Capture", self.last_capture_var)
-        self._add_status_row(status, 6, "Last Regions", self.last_regions_var)
-        self._add_status_row(status, 7, "Last Reading", self.last_reading_var)
-        self._add_status_row(status, 8, "Last Advice", self.last_advice_var)
-        self._add_status_row(status, 9, "S Lineups", self.last_lineups_var)
-        self._add_status_row(status, 10, "Core Advice", self.last_core_var)
-        self._add_status_row(status, 11, "Item Advice", self.last_item_var)
-        self._add_status_row(status, 12, "Tempo Advice", self.last_tempo_var)
-
-        actions = ttk.LabelFrame(self.root, text="Actions", padding=16)
-        actions.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 12))
-
-        self.refresh_button = ttk.Button(actions, text="Refresh Status", command=self.refresh_status)
-        self.launch_button = ttk.Button(actions, text="Launch Emulator", command=self.launch_instance)
-        self.run_game_button = ttk.Button(actions, text="Launch Game", command=self.launch_game)
-        self.capture_button = ttk.Button(actions, text="Capture Screenshot", command=self.capture_screenshot)
-        self.capture_regions_button = ttk.Button(actions, text="Capture Regions", command=self.capture_regions)
-        self.read_button = ttk.Button(actions, text="Read Numbers", command=self.capture_readings)
-        self.advice_button = ttk.Button(actions, text="Get Advice", command=self.capture_advice)
-        self.tempo_button = ttk.Button(actions, text="Tempo Advice", command=self.capture_tempo_advice)
-        self.lineups_button = ttk.Button(actions, text="S Lineups", command=self.fetch_s_lineups)
-        self.open_folder_button = ttk.Button(actions, text="Open Capture Folder", command=self.open_capture_folder)
-
-        self.refresh_button.grid(row=0, column=0, padx=(0, 8), pady=4, sticky="ew")
-        self.launch_button.grid(row=0, column=1, padx=8, pady=4, sticky="ew")
-        self.run_game_button.grid(row=0, column=2, padx=8, pady=4, sticky="ew")
-        self.capture_button.grid(row=0, column=3, padx=(8, 0), pady=4, sticky="ew")
-        self.capture_regions_button.grid(row=1, column=0, padx=(0, 8), pady=4, sticky="ew")
-        self.read_button.grid(row=1, column=1, padx=8, pady=4, sticky="ew")
-        self.advice_button.grid(row=1, column=2, padx=8, pady=4, sticky="ew")
-        self.lineups_button.grid(row=1, column=3, padx=(8, 0), pady=4, sticky="ew")
-        self.tempo_button.grid(row=2, column=0, padx=(0, 8), pady=4, sticky="ew")
-        self.open_folder_button.grid(row=2, column=1, columnspan=3, padx=0, pady=4, sticky="ew")
-
-        for column in range(4):
-            actions.columnconfigure(column, weight=1)
-
-        core = ttk.LabelFrame(self.root, text="Core Helper", padding=16)
-        core.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 12))
-        core.columnconfigure(1, weight=1)
-
-        ttk.Label(core, text="Live Tokens").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=3)
-        ttk.Entry(core, textvariable=self.live_tokens_var).grid(row=0, column=1, sticky="ew", pady=3)
-        ttk.Label(core, text="Owned Copies").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=3)
-        ttk.Entry(core, textvariable=self.owned_cards_var).grid(row=1, column=1, sticky="ew", pady=3)
-        ttk.Label(core, text="Item Components").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=3)
-        ttk.Entry(core, textvariable=self.item_components_var).grid(row=2, column=1, sticky="ew", pady=3)
-
-        self.core_button = ttk.Button(core, text="Core Advice", command=self.get_core_advice)
-        self.shop_scan_button = ttk.Button(core, text="Scan Shop", command=self.scan_shop)
-        self.scout_button = ttk.Button(core, text="Scout Opponent", command=self.scout_opponent)
-        self.item_button = ttk.Button(core, text="Item Advice", command=self.get_item_advice)
-        self.reset_cards_button = ttk.Button(core, text="Reset Card Counts", command=self.reset_card_counts)
-        self.core_button.grid(row=0, column=2, padx=(8, 0), pady=3, sticky="ew")
-        self.shop_scan_button.grid(row=1, column=2, padx=(8, 0), pady=3, sticky="ew")
-        self.scout_button.grid(row=0, column=3, padx=(8, 0), pady=3, sticky="ew")
-        self.reset_cards_button.grid(row=1, column=3, padx=(8, 0), pady=3, sticky="ew")
-        self.item_button.grid(row=2, column=2, columnspan=2, padx=(8, 0), pady=3, sticky="ew")
-
-        hint = (
-            "Live tokens rank S lineups. Owned copies drive cost-aware star warnings, "
-            "e.g. 4费Vexx7, 五费Nami=3, or Vex@4x7. Focus is 4/5-cost units."
-            " Item Components can be 大剑 眼泪 拳套."
-            " Scout Opponent only captures the opponent board you manually opened."
-            " Default pools: 1=30, 2=25, 3=18, 4=10, 5=9."
+    def _build_snapshot_card(self, parent: tk.Widget) -> None:
+        card = self._card(parent, "截图状态")
+        self.preview_label = tk.Label(
+            card,
+            text="还没有截图\n点击“一键扫描当前局势”",
+            bg="#1f2d2a",
+            fg="#f8edd7",
+            width=40,
+            height=10,
+            font=("Microsoft YaHei UI", 11),
         )
-        ttk.Label(core, text=hint).grid(row=3, column=0, columnspan=4, sticky="w", pady=(6, 0))
+        self.preview_label.grid(row=0, column=0, columnspan=4, sticky="ew")
 
-        log_frame = ttk.LabelFrame(self.root, text="Log", padding=12)
-        log_frame.grid(row=4, column=0, sticky="nsew", padx=16, pady=(0, 16))
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
+        metrics = tk.Frame(card, bg=CARD_BG)
+        metrics.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(10, 0))
+        for col in range(4):
+            metrics.columnconfigure(col, weight=1)
+        self._metric(metrics, 0, "阶段", self.stage_value_var)
+        self._metric(metrics, 1, "等级", self.level_value_var)
+        self._metric(metrics, 2, "金币", self.gold_value_var)
+        self._metric(metrics, 3, "血量", self.hp_value_var)
 
-        self.log_text = tk.Text(log_frame, wrap="word", height=14, state="disabled")
-        self.log_text.grid(row=0, column=0, sticky="nsew")
-        scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        self.log_text.configure(yscrollcommand=scrollbar.set)
+        self.capture_button = ttk.Button(card, text="只截图", command=self.capture_screenshot)
+        self.read_button = ttk.Button(card, text="读取数字", command=self.capture_readings)
+        self.tempo_button = ttk.Button(card, text="节奏建议", command=self.capture_tempo_advice)
+        self.capture_regions_button = ttk.Button(card, text="导出区域", command=self.capture_regions)
+        self.capture_button.grid(row=2, column=0, sticky="ew", padx=(0, 4), pady=(10, 0))
+        self.read_button.grid(row=2, column=1, sticky="ew", padx=4, pady=(10, 0))
+        self.tempo_button.grid(row=2, column=2, sticky="ew", padx=4, pady=(10, 0))
+        self.capture_regions_button.grid(row=2, column=3, sticky="ew", padx=(4, 0), pady=(10, 0))
 
-    def _add_status_row(self, parent: ttk.Widget, row: int, label: str, variable: tk.StringVar) -> None:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 12), pady=2)
-        ttk.Label(parent, textvariable=variable).grid(row=row, column=1, sticky="nw", pady=2)
+    def _build_inputs_card(self, parent: tk.Widget) -> None:
+        card = self._card(parent, "手动补充")
+        tk.Label(card, text="来牌/羁绊", bg=CARD_BG, font=PANEL_FONT).grid(row=0, column=0, sticky="w", pady=3)
+        ttk.Entry(card, textvariable=self.live_tokens_var).grid(row=0, column=1, sticky="ew", pady=3, padx=(8, 0))
+        tk.Label(card, text="已拥有棋子", bg=CARD_BG, font=PANEL_FONT).grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Entry(card, textvariable=self.owned_cards_var).grid(row=1, column=1, sticky="ew", pady=3, padx=(8, 0))
+        tk.Label(card, text="装备散件", bg=CARD_BG, font=PANEL_FONT).grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Entry(card, textvariable=self.item_components_var).grid(row=2, column=1, sticky="ew", pady=3, padx=(8, 0))
+
+        buttons = tk.Frame(card, bg=CARD_BG)
+        buttons.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        for col in range(2):
+            buttons.columnconfigure(col, weight=1)
+        self.core_button = ttk.Button(buttons, text="刷新阵容/三星", command=self.get_core_advice)
+        self.shop_scan_button = ttk.Button(buttons, text="扫描商店", command=self.scan_shop)
+        self.item_button = ttk.Button(buttons, text="装备主 C", command=self.get_item_advice)
+        self.scout_button = ttk.Button(buttons, text="侦查对手", command=self.scout_opponent)
+        self.reset_cards_button = ttk.Button(buttons, text="重置棋子计数", command=self.reset_card_counts)
+        self.lineups_button = ttk.Button(buttons, text="查看 S 阵容", command=self.fetch_s_lineups)
+        self.core_button.grid(row=0, column=0, sticky="ew", padx=(0, 4), pady=3)
+        self.shop_scan_button.grid(row=0, column=1, sticky="ew", padx=(4, 0), pady=3)
+        self.item_button.grid(row=1, column=0, sticky="ew", padx=(0, 4), pady=3)
+        self.scout_button.grid(row=1, column=1, sticky="ew", padx=(4, 0), pady=3)
+        self.reset_cards_button.grid(row=2, column=0, sticky="ew", padx=(0, 4), pady=3)
+        self.lineups_button.grid(row=2, column=1, sticky="ew", padx=(4, 0), pady=3)
+
+        tk.Label(
+            card,
+            text="例：已拥有 4费千珏x7；散件 大剑 眼泪 拳套。工具只读截图，不会点击游戏。",
+            bg=CARD_BG,
+            fg="#6b5a43",
+            font=("Microsoft YaHei UI", 9),
+            wraplength=370,
+            justify="left",
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+    def _build_right_dashboard(self, parent: tk.Widget) -> None:
+        self._panel(parent, "current", "当前建议", row=0, column=0, columnspan=2, height=7)
+        self._panel(parent, "lineups", "S 阵容推荐", row=1, column=0, height=9)
+        self._panel(parent, "stars", "三星警告 / 商店必买", row=1, column=1, height=9)
+        self._panel(parent, "chase", "追三概率", row=2, column=0, height=8)
+        self._panel(parent, "items", "装备和主 C", row=2, column=1, height=8)
+        self._panel(parent, "log", "运行日志 / 详细结果", row=3, column=0, columnspan=2, height=10)
+
+        self._set_panel("current", "点击“一键扫描当前局势”，这里会显示该升人口、存钱、小 D 还是 all in。")
+        self._set_panel("lineups", "等待扫描。")
+        self._set_panel("stars", "等待扫描。")
+        self._set_panel("chase", "等待扫描。")
+        self._set_panel("items", "等待扫描。")
+        self._set_panel("log", "准备就绪。")
+
+    def _panel(self, parent: tk.Widget, key: str, title: str, *, row: int, column: int, height: int, columnspan: int = 1) -> None:
+        frame = tk.Frame(parent, bg="#f7f1e3")
+        frame.grid(row=row, column=column, columnspan=columnspan, sticky="nsew", padx=6, pady=6)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(1, weight=1)
+        tk.Label(
+            frame,
+            text=title,
+            bg="#f7f1e3",
+            fg="#17362f",
+            font=("Microsoft YaHei UI", 12, "bold"),
+        ).grid(row=0, column=0, sticky="w", pady=(0, 4))
+        text = tk.Text(
+            frame,
+            height=height,
+            wrap="word",
+            bg="#fffdf7",
+            fg="#23312d",
+            relief="flat",
+            padx=10,
+            pady=8,
+            font=PANEL_FONT,
+            state="disabled",
+        )
+        text.grid(row=1, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
+        scrollbar.grid(row=1, column=1, sticky="ns")
+        text.configure(yscrollcommand=scrollbar.set)
+        self._panels[key] = text
+
+    def _metric(self, parent: tk.Widget, column: int, label: str, variable: tk.StringVar) -> None:
+        box = tk.Frame(parent, bg="#f0e0c2", padx=8, pady=6)
+        box.grid(row=0, column=column, sticky="ew", padx=3)
+        tk.Label(box, text=label, bg="#f0e0c2", fg="#6d5432", font=("Microsoft YaHei UI", 9)).pack()
+        tk.Label(box, textvariable=variable, bg="#f0e0c2", fg="#17362f", font=("Microsoft YaHei UI", 15, "bold")).pack()
+
+    def _status_line(self, parent: tk.Widget, row: int, label: str, variable: tk.StringVar) -> None:
+        tk.Label(parent, text=label, bg="#f0e6d2", fg="#6d5432", font=("Microsoft YaHei UI", 9)).grid(
+            row=row, column=0, sticky="nw", padx=(0, 8), pady=1
+        )
+        tk.Label(parent, textvariable=variable, bg="#f0e6d2", fg="#26352f", font=("Microsoft YaHei UI", 9)).grid(
+            row=row, column=1, sticky="nw", pady=1
+        )
 
     def _pick_ldplayer_root(self) -> None:
-        selected = filedialog.askdirectory(title="Select LDPlayer root")
+        selected = filedialog.askdirectory(title="选择雷电模拟器目录")
         if selected:
             self.ldplayer_root_var.set(selected)
 
     def _pick_capture_dir(self) -> None:
-        selected = filedialog.askdirectory(title="Select capture folder")
+        selected = filedialog.askdirectory(title="选择截图目录")
         if selected:
             self.capture_dir_var.set(selected)
 
@@ -205,20 +398,20 @@ class JkcheeseGui:
     def _client(self) -> LDPlayerClient:
         root = self.ldplayer_root_var.get().strip()
         if not root:
-            raise LDPlayerError("Please choose the LDPlayer root first.")
+            raise LDPlayerError("请先选择雷电模拟器目录。")
         return LDPlayerClient(Path(root))
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
         state = "disabled" if busy else "normal"
         for button in (
+            self.primary_button,
             self.refresh_button,
             self.launch_button,
             self.run_game_button,
             self.capture_button,
             self.capture_regions_button,
             self.read_button,
-            self.advice_button,
             self.tempo_button,
             self.lineups_button,
             self.core_button,
@@ -230,12 +423,24 @@ class JkcheeseGui:
         ):
             button.configure(state=state)
 
+    def _set_panel(self, key: str, message: str) -> None:
+        panel = self._panels[key]
+        panel.configure(state="normal")
+        panel.delete("1.0", "end")
+        panel.insert("end", message)
+        panel.configure(state="disabled")
+
+    def _queue_panel(self, key: str, message: str) -> None:
+        self.root.after(0, lambda: self._set_panel(key, message))
+
     def _log(self, message: str) -> None:
         timestamp = time.strftime("%H:%M:%S")
-        self.log_text.configure(state="normal")
-        self.log_text.insert("end", f"[{timestamp}] {message}\n")
-        self.log_text.see("end")
-        self.log_text.configure(state="disabled")
+        panel = self._panels.get("log")
+        if panel is not None:
+            panel.configure(state="normal")
+            panel.insert("end", f"[{timestamp}] {message}\n")
+            panel.see("end")
+            panel.configure(state="disabled")
 
     def _run_task(self, label: str, fn) -> None:
         if self._busy:
@@ -257,41 +462,65 @@ class JkcheeseGui:
 
     def _task_done(self, label: str, result) -> None:
         self._set_busy(False)
-        self.status_var.set("Ready")
+        self.status_var.set("准备就绪")
         if result:
             self._log(str(result))
 
     def _task_failed(self, label: str, exc: Exception) -> None:
         self._set_busy(False)
-        self.status_var.set("Error")
-        self._log(f"{label} failed: {exc}")
+        self.status_var.set("出错")
+        self._log(f"{label} 失败: {exc}")
         messagebox.showerror("Jkcheese", str(exc))
+
+    def _show_preview(self, path: Path) -> None:
+        try:
+            image = Image.open(path).convert("RGB")
+            image.thumbnail((390, 220), Image.Resampling.LANCZOS)
+            self._preview_image = ImageTk.PhotoImage(image)
+        except OSError:
+            return
+        self.preview_label.configure(image=self._preview_image, text="", width=390, height=220)
+
+    def _update_reading_widgets(self, readings: list[OcrReading]) -> None:
+        self.stage_value_var.set(_reading_text(readings, "stage") or "?")
+        level = _reading_value(readings, "level")
+        gold = _reading_value(readings, "gold")
+        hp = _reading_value(readings, "player_hp")
+        self.level_value_var.set("?" if level is None else str(level))
+        self.gold_value_var.set("?" if gold is None else str(gold))
+        self.hp_value_var.set("?" if hp is None else str(hp))
+        self.last_reading_var.set(format_reading_summary(readings))
+
+    def _capture_dir(self) -> Path:
+        capture_dir_text = self.capture_dir_var.get().strip()
+        if not capture_dir_text:
+            raise LDPlayerError("请先选择截图目录。")
+        return Path(capture_dir_text)
 
     def refresh_status(self) -> None:
         def task() -> str:
             client = self._client()
             instance = client.get_instance(self._current_index())
             self.root.after(0, lambda: self.instance_name_var.set(instance.name))
-            self.root.after(0, lambda: self.game_installed_var.set("Yes" if instance.has_game else "No"))
+            self.root.after(0, lambda: self.game_installed_var.set("已安装" if instance.has_game else "未检测到"))
 
             if not instance.has_game:
                 self.root.after(0, lambda: self.game_process_var.set("-"))
                 self.root.after(0, lambda: self.apk_path_var.set("-"))
-                return f"Instance {instance.index} is available but the game was not detected."
+                return f"实例 {instance.index} 可用，但未检测到金铲铲。"
 
             if not instance.running:
-                self.root.after(0, lambda: self.game_process_var.set("Emulator stopped"))
+                self.root.after(0, lambda: self.game_process_var.set("模拟器未启动"))
                 self.root.after(0, lambda: self.apk_path_var.set("-"))
-                return f"Instance {instance.index} is stopped."
+                return f"实例 {instance.index} 未启动。"
 
             game_running = client.is_package_running(instance.index, GAME_PACKAGE)
             apk_path = client.resolve_package_path(instance.index, GAME_PACKAGE) or "-"
-
-            self.root.after(0, lambda: self.game_process_var.set("Running" if game_running else "Not running"))
+            self.root.after(0, lambda: self.game_process_var.set("运行中" if game_running else "未运行"))
             self.root.after(0, lambda: self.apk_path_var.set(apk_path))
-            return f"Status refreshed for instance {instance.index}."
+            return f"已刷新实例 {instance.index}。"
 
-        self._run_task("Refreshing status", task)
+        self._run_task("刷新状态", task)
 
     def launch_instance(self) -> None:
         def task() -> str:
@@ -299,9 +528,9 @@ class JkcheeseGui:
             index = self._current_index()
             client.launch(index)
             client.wait_for_running(index)
-            return f"Instance {index} launched."
+            return f"实例 {index} 已启动。"
 
-        self._run_task("Launching emulator", task)
+        self._run_task("启动模拟器", task)
 
     def launch_game(self) -> None:
         def task() -> str:
@@ -312,104 +541,77 @@ class JkcheeseGui:
                 client.wait_for_running(index)
             client.wait_for_boot(index)
             client.run_app(index, GAME_PACKAGE)
-            return f"Game launch command sent to instance {index}."
+            return f"已发送启动金铲铲命令到实例 {index}。"
 
-        self._run_task("Launching game", task)
+        self._run_task("启动游戏", task)
 
     def capture_screenshot(self) -> None:
         def task() -> str:
             client = self._client()
-            index = self._current_index()
-            capture_dir_text = self.capture_dir_var.get().strip()
-            if not capture_dir_text:
-                raise LDPlayerError("Please choose a capture folder first.")
-            capture_dir = Path(capture_dir_text)
-            filename = time.strftime("jkcheese_%Y%m%d_%H%M%S.png")
-            output = capture_dir / filename
-            saved = client.capture_screenshot(index, output, launch_if_needed=True)
+            output = self._capture_dir() / f"jkcheese_{time.strftime('%Y%m%d_%H%M%S')}.png"
+            saved = client.capture_screenshot(self._current_index(), output, launch_if_needed=True)
             self.root.after(0, lambda: self.last_capture_var.set(str(saved)))
-            return f"Screenshot saved to {saved}"
+            self.root.after(0, lambda: self._show_preview(saved))
+            return f"截图已保存：{saved}"
 
-        self._run_task("Capturing screenshot", task)
+        self._run_task("截图", task)
 
     def capture_regions(self) -> None:
         def task() -> str:
             client = self._client()
-            index = self._current_index()
-            capture_dir_text = self.capture_dir_var.get().strip()
-            if not capture_dir_text:
-                raise LDPlayerError("Please choose a capture folder first.")
-
-            session_dir = Path(capture_dir_text) / time.strftime("regions_%Y%m%d_%H%M%S")
+            session_dir = self._capture_dir() / time.strftime("regions_%Y%m%d_%H%M%S")
             screenshot_path = session_dir / "screen.png"
-            saved = client.capture_screenshot(index, screenshot_path, launch_if_needed=True)
+            saved = client.capture_screenshot(self._current_index(), screenshot_path, launch_if_needed=True)
             region_dir = session_dir / "regions"
             results = crop_regions(saved, region_dir)
-
             self.root.after(0, lambda: self.last_capture_var.set(str(saved)))
             self.root.after(0, lambda: self.last_regions_var.set(str(region_dir)))
-            return f"Captured {len(results)} regions to {region_dir}"
+            self.root.after(0, lambda: self._show_preview(saved))
+            return f"已导出 {len(results)} 个区域到 {region_dir}"
 
-        self._run_task("Capturing regions", task)
+        self._run_task("导出区域", task)
 
     def capture_readings(self) -> None:
         def task() -> str:
             client = self._client()
-            index = self._current_index()
-            capture_dir_text = self.capture_dir_var.get().strip()
-            if not capture_dir_text:
-                raise LDPlayerError("Please choose a capture folder first.")
-
-            session_dir = Path(capture_dir_text) / time.strftime("read_%Y%m%d_%H%M%S")
+            session_dir = self._capture_dir() / time.strftime("read_%Y%m%d_%H%M%S")
             screenshot_path = session_dir / "screen.png"
-            saved = client.capture_screenshot(index, screenshot_path, launch_if_needed=True)
+            saved = client.capture_screenshot(self._current_index(), screenshot_path, launch_if_needed=True)
             readings = read_screenshot(saved)
-            summary = ", ".join(f"{reading.name}={reading.text or '?'}" for reading in readings)
-
+            summary = format_reading_summary(readings)
             self.root.after(0, lambda: self.last_capture_var.set(str(saved)))
-            self.root.after(0, lambda: self.last_reading_var.set(summary))
-            return f"Read {summary}"
+            self.root.after(0, lambda: self._show_preview(saved))
+            self.root.after(0, lambda: self._update_reading_widgets(readings))
+            self._queue_panel("current", f"读数已更新：\n{summary}")
+            return "读数已更新。"
 
-        self._run_task("Reading numbers", task)
+        self._run_task("读取数字", task)
 
     def capture_advice(self) -> None:
         def task() -> str:
             client = self._client()
-            index = self._current_index()
-            capture_dir_text = self.capture_dir_var.get().strip()
-            if not capture_dir_text:
-                raise LDPlayerError("Please choose a capture folder first.")
-
-            session_dir = Path(capture_dir_text) / time.strftime("advice_%Y%m%d_%H%M%S")
+            session_dir = self._capture_dir() / time.strftime("advice_%Y%m%d_%H%M%S")
             screenshot_path = session_dir / "screen.png"
-            saved = client.capture_screenshot(index, screenshot_path, launch_if_needed=True)
+            saved = client.capture_screenshot(self._current_index(), screenshot_path, launch_if_needed=True)
             report = build_advice(read_screenshot(saved))
-            reading_summary = ", ".join(f"{reading.name}={reading.text or '?'}" for reading in report.readings)
-            advice_summary = "; ".join(item.title for item in report.advice)
-
+            reading_summary = format_reading_summary(report.readings)
+            advice_lines = [f"- [{item.severity}] {item.title}: {item.detail}" for item in report.advice]
+            rhythm_text = format_economy_rhythm(report.rhythm) if report.rhythm is not None else ""
             self.root.after(0, lambda: self.last_capture_var.set(str(saved)))
-            self.root.after(0, lambda: self.last_reading_var.set(reading_summary))
-            self.root.after(0, lambda: self.last_advice_var.set(advice_summary))
-            if report.rhythm is not None:
-                tempo_summary = "; ".join(item.title for item in report.rhythm.advice[:2])
-                self.root.after(0, lambda: self.last_tempo_var.set(tempo_summary or "-"))
+            self.root.after(0, lambda: self._show_preview(saved))
+            self.root.after(0, lambda: self._update_reading_widgets(list(report.readings)))
+            self.root.after(0, lambda: self.last_advice_var.set("; ".join(item.title for item in report.advice) or "-"))
+            self._queue_panel("current", f"截图读数：{reading_summary}\n\n" + "\n".join(advice_lines) + "\n\n" + rhythm_text)
+            return "当前建议已刷新。"
 
-            warning_lines = [warning.message for warning in report.warnings]
-            advice_lines = [f"{item.title}: {item.detail}" for item in report.advice]
-            rhythm_lines = [format_economy_rhythm(report.rhythm)] if report.rhythm is not None else []
-            details = warning_lines + advice_lines + rhythm_lines
-            return "\n".join(details)
-
-        self._run_task("Getting advice", task)
+        self._run_task("刷新当前建议", task)
 
     def capture_tempo_advice(self) -> None:
         def task() -> str:
             client = self._client()
-            index = self._current_index()
-            capture_dir = self._capture_dir()
-            session_dir = capture_dir / time.strftime("tempo_%Y%m%d_%H%M%S")
+            session_dir = self._capture_dir() / time.strftime("tempo_%Y%m%d_%H%M%S")
             screenshot_path = session_dir / "screen.png"
-            saved = client.capture_screenshot(index, screenshot_path, launch_if_needed=True)
+            saved = client.capture_screenshot(self._current_index(), screenshot_path, launch_if_needed=True)
             readings = read_screenshot(saved)
             report = build_economy_rhythm(
                 stage=_reading_text(readings, "stage"),
@@ -417,53 +619,43 @@ class JkcheeseGui:
                 gold=_reading_value(readings, "gold"),
                 hp=_reading_value(readings, "player_hp"),
             )
-            reading_summary = ", ".join(f"{reading.name}={reading.text or '?'}" for reading in readings)
             tempo_summary = "; ".join(item.title for item in report.advice[:2])
             self.root.after(0, lambda: self.last_capture_var.set(str(saved)))
-            self.root.after(0, lambda: self.last_reading_var.set(reading_summary))
+            self.root.after(0, lambda: self._show_preview(saved))
+            self.root.after(0, lambda: self._update_reading_widgets(readings))
             self.root.after(0, lambda: self.last_tempo_var.set(tempo_summary or "-"))
-            return format_economy_rhythm(report)
+            self._queue_panel("current", format_economy_rhythm(report))
+            return "节奏建议已刷新。"
 
-        self._run_task("Building tempo advice", task)
+        self._run_task("节奏建议", task)
 
     def fetch_s_lineups(self) -> None:
         def task() -> str:
             lineups = fetch_jcc_s_lineups()
             recommendations = recommend_lineups(lineups, limit=5)
             summary = "; ".join(item.lineup.name for item in recommendations)
+            lines = ["S 阵容推荐"]
+            for index, item in enumerate(recommendations, start=1):
+                notes = f" | 备注: {'; '.join(item.lineup.notes)}" if item.lineup.notes else ""
+                lines.append(f"{index}. {item.lineup.name}{notes}")
             self.root.after(0, lambda: self.last_lineups_var.set(summary))
+            self._queue_panel("lineups", "\n".join(lines))
+            return "S 阵容已刷新。"
 
-            lines = ["S-tier lineups from 实时铲榜:"]
-            for item in recommendations:
-                notes = f" ({'; '.join(item.lineup.notes)})" if item.lineup.notes else ""
-                lines.append(f"- {item.lineup.name}{notes}")
-            return "\n".join(lines)
-
-        self._run_task("Fetching S lineups", task)
+        self._run_task("获取 S 阵容", task)
 
     def get_core_advice(self) -> None:
         def task() -> str:
             capture_dir = self._capture_dir()
-            state_path = capture_dir / "card_state.json"
             lineups = fetch_jcc_s_lineups()
             report = build_core_advice(
-                state_path=state_path,
+                state_path=capture_dir / "card_state.json",
                 lineups=lineups,
                 seen=self.live_tokens_var.get(),
                 owned=self.owned_cards_var.get(),
                 mode="add",
                 limit=5,
             )
-
-            warning_summary = "; ".join(warning.title for warning in report.warnings[:3])
-            if not warning_summary:
-                warning_summary = "No upgrade warning"
-            lineup_summary = "; ".join(item.lineup.name for item in report.recommendations[:3])
-
-            self.root.after(0, lambda: self.last_core_var.set(warning_summary))
-            if lineup_summary:
-                self.root.after(0, lambda: self.last_lineups_var.set(lineup_summary))
-            self.root.after(0, lambda: self.owned_cards_var.set(""))
             item_report = build_item_advice(
                 report.recommendations,
                 state=report.state,
@@ -471,11 +663,20 @@ class JkcheeseGui:
                 item_components=self.item_components_var.get(),
                 limit=3,
             )
+            warning_summary = "; ".join(warning.title for warning in report.warnings[:3]) or "暂无三星警告"
+            lineup_summary = "; ".join(item.lineup.name for item in report.recommendations[:3])
             item_summary = "; ".join(f"{plan.lineup_name}: {plan.main_carry}" for plan in item_report.plans[:2]) or "-"
+            self.root.after(0, lambda: self.last_core_var.set(warning_summary))
+            self.root.after(0, lambda: self.last_lineups_var.set(lineup_summary or "-"))
             self.root.after(0, lambda: self.last_item_var.set(item_summary))
-            return format_core_advice(report) + "\n\n" + format_item_advice(item_report)
+            self.root.after(0, lambda: self.owned_cards_var.set(""))
+            self._queue_panel("lineups", format_lineup_panel(report))
+            self._queue_panel("stars", format_star_panel(report))
+            self._queue_panel("items", format_item_advice(item_report))
+            self._queue_panel("log", format_core_advice(report))
+            return "阵容和三星警告已刷新。"
 
-        self._run_task("Building core advice", task)
+        self._run_task("阵容 / 三星", task)
 
     def get_item_advice(self) -> None:
         def task() -> str:
@@ -496,25 +697,23 @@ class JkcheeseGui:
                 item_components=self.item_components_var.get(),
                 limit=3,
             )
-            lineup_summary = "; ".join(item.lineup.name for item in core_report.recommendations[:3])
             item_summary = "; ".join(f"{plan.lineup_name}: {plan.main_carry}" for plan in item_report.plans[:2]) or "-"
-            if lineup_summary:
-                self.root.after(0, lambda: self.last_lineups_var.set(lineup_summary))
             self.root.after(0, lambda: self.last_item_var.set(item_summary))
             self.root.after(0, lambda: self.owned_cards_var.set(""))
-            return format_item_advice(item_report)
+            self._queue_panel("items", format_item_advice(item_report))
+            self._queue_panel("lineups", format_lineup_panel(core_report))
+            return "装备和主 C 已刷新。"
 
-        self._run_task("Building item advice", task)
+        self._run_task("装备 / 主 C", task)
 
     def scan_shop(self) -> None:
         def task() -> str:
             client = self._client()
-            index = self._current_index()
             capture_dir = self._capture_dir()
-            session_dir = capture_dir / time.strftime("shop_%Y%m%d_%H%M%S")
+            session_dir = capture_dir / time.strftime("dashboard_%Y%m%d_%H%M%S")
             screenshot_path = session_dir / "screen.png"
-            saved = client.capture_screenshot(index, screenshot_path, launch_if_needed=True)
-            report = scan_shop_screenshot(
+            saved = client.capture_screenshot(self._current_index(), screenshot_path, launch_if_needed=True)
+            shop_report = scan_shop_screenshot(
                 saved,
                 output_dir=session_dir / "shop",
                 templates_path=capture_dir / "shop_templates.json",
@@ -533,64 +732,79 @@ class JkcheeseGui:
             core_report = build_core_advice(
                 state_path=capture_dir / "card_state.json",
                 lineups=lineups,
-                seen=(*report.recognized_names, self.live_tokens_var.get()),
+                seen=(*shop_report.recognized_names, self.live_tokens_var.get()),
                 owned=self.owned_cards_var.get(),
                 mode="add",
                 limit=5,
             )
-            hit_alerts = build_shop_hit_alerts(report, core_report.state, lineups=lineups)
+            hit_alerts = build_shop_hit_alerts(shop_report, core_report.state, lineups=lineups)
             item_report = build_item_advice(
                 core_report.recommendations,
                 state=core_report.state,
-                shop_names=report.recognized_names,
+                shop_names=shop_report.recognized_names,
                 seen_tokens=core_report.seen_tokens,
                 item_components=self.item_components_var.get(),
                 limit=3,
             )
-            lineup_summary = "; ".join(item.lineup.name for item in core_report.recommendations[:3])
-            shop_summary = ", ".join(report.recognized_names) if report.recognized_names else "No named shop cards"
-            hit_summary = "; ".join(f"槽位{alert.slot} {alert.name}" for alert in hit_alerts[:3])
-            item_summary = "; ".join(f"{plan.lineup_name}: {plan.main_carry}" for plan in item_report.plans[:2]) or "-"
-            chase_output = "四费/五费追三概率:\n- 未能稳定读取等级或金币；可用 CLI 的 chase 命令手动计算。"
             if detected_level is not None and detected_gold is not None:
                 chase_output = format_chase_reports(
                     build_chase_reports_from_state(
                         core_report.state,
                         level=detected_level,
                         gold=detected_gold,
-                        visible_counts=visible_counts_from_shop(report),
+                        visible_counts=visible_counts_from_shop(shop_report),
                     )
                 )
-            self.root.after(0, lambda: self.last_capture_var.set(str(saved)))
-            self.root.after(0, lambda: self.last_lineups_var.set(lineup_summary or "-"))
-            self.root.after(0, lambda: self.last_core_var.set(hit_summary or shop_summary))
-            self.root.after(0, lambda: self.last_item_var.set(item_summary))
-            tempo_summary = "; ".join(item.title for item in rhythm_report.advice[:2])
-            self.root.after(0, lambda: self.last_tempo_var.set(tempo_summary or "-"))
-            return (
-                format_shop_scan(report)
-                + "\n\n"
-                + format_shop_hit_alerts(hit_alerts)
-                + "\n\n"
-                + format_item_advice(item_report)
-                + "\n\n"
-                + format_economy_rhythm(rhythm_report)
-                + "\n\n"
-                + chase_output
-                + "\n\n"
-                + format_core_advice(core_report)
-            )
+            else:
+                chase_output = "四费/五费追三概率:\n- 等级或金币没读稳，先手动输入或稍后再扫。"
 
-        self._run_task("Scanning shop", task)
+            reading_summary = format_reading_summary(readings)
+            shop_summary = ", ".join(shop_report.recognized_names) if shop_report.recognized_names else "未识别到商店牌名"
+            lineup_summary = "; ".join(item.lineup.name for item in core_report.recommendations[:3]) or "-"
+            hit_summary = "; ".join(f"槽位{alert.slot} {alert.name}" for alert in hit_alerts[:3]) or shop_summary
+            item_summary = "; ".join(f"{plan.lineup_name}: {plan.main_carry}" for plan in item_report.plans[:2]) or "-"
+            tempo_summary = "; ".join(item.title for item in rhythm_report.advice[:2]) or "-"
+
+            self.root.after(0, lambda: self.last_capture_var.set(str(saved)))
+            self.root.after(0, lambda: self._show_preview(saved))
+            self.root.after(0, lambda: self._update_reading_widgets(readings))
+            self.root.after(0, lambda: self.last_lineups_var.set(lineup_summary))
+            self.root.after(0, lambda: self.last_core_var.set(hit_summary))
+            self.root.after(0, lambda: self.last_item_var.set(item_summary))
+            self.root.after(0, lambda: self.last_tempo_var.set(tempo_summary))
+
+            self._queue_panel(
+                "current",
+                f"截图读数：{reading_summary}\n商店来牌：{shop_summary}\n\n{format_economy_rhythm(rhythm_report)}",
+            )
+            self._queue_panel("lineups", format_lineup_panel(core_report))
+            self._queue_panel("stars", format_star_panel(core_report, hit_alerts))
+            self._queue_panel("chase", chase_output)
+            self._queue_panel("items", format_item_advice(item_report))
+            self._queue_panel(
+                "log",
+                "\n\n".join(
+                    (
+                        format_shop_scan(shop_report),
+                        format_shop_hit_alerts(hit_alerts),
+                        format_item_advice(item_report),
+                        format_economy_rhythm(rhythm_report),
+                        chase_output,
+                        format_core_advice(core_report),
+                    )
+                ),
+            )
+            return "一键扫描完成。"
+
+        self._run_task("一键扫描当前局势", task)
 
     def scout_opponent(self) -> None:
         def task() -> str:
             client = self._client()
-            index = self._current_index()
             capture_dir = self._capture_dir()
             session_dir = capture_dir / time.strftime("scout_%Y%m%d_%H%M%S")
             screenshot_path = session_dir / "screen.png"
-            saved = client.capture_screenshot(index, screenshot_path, launch_if_needed=True)
+            saved = client.capture_screenshot(self._current_index(), screenshot_path, launch_if_needed=True)
             report = scan_opponent(
                 saved,
                 templates_path=capture_dir / "opponent_templates.json",
@@ -599,7 +813,6 @@ class JkcheeseGui:
             readings = read_screenshot(saved)
             detected_level = _reading_value(readings, "level")
             detected_gold = _reading_value(readings, "gold")
-            chase_output = "四费/五费追三概率:\n- 未能稳定读取等级或金币；可用 CLI capture-scout 加 --level/--gold。"
             if detected_level is not None and detected_gold is not None:
                 chase_output = format_chase_reports(
                     build_chase_reports_from_state(
@@ -609,34 +822,34 @@ class JkcheeseGui:
                         contested_counts=report.contested_counts,
                     )
                 )
+            else:
+                chase_output = "四费/五费追三概率:\n- 等级或金币没读稳，可用 CLI capture-scout 加 --level/--gold。"
 
-            counts = report.contested_counts
-            summary = "; ".join(f"{name}={count}" for name, count in counts.items()) or "No scout match"
+            summary = "; ".join(f"{name}={count}" for name, count in report.contested_counts.items()) or "暂无侦查命中"
             self.root.after(0, lambda: self.last_capture_var.set(str(saved)))
+            self.root.after(0, lambda: self._show_preview(saved))
+            self.root.after(0, lambda: self._update_reading_widgets(readings))
             self.root.after(0, lambda: self.last_core_var.set(summary))
-            return format_opponent_scout(report) + "\n\n" + chase_output
+            self._queue_panel("stars", format_opponent_scout(report))
+            self._queue_panel("chase", chase_output)
+            return "对手侦查完成。"
 
-        self._run_task("Scouting opponent", task)
+        self._run_task("侦查对手", task)
 
     def reset_card_counts(self) -> None:
         def task() -> str:
             state_path = self._capture_dir() / "card_state.json"
             reset_card_state(state_path)
-            self.root.after(0, lambda: self.last_core_var.set("Card counts reset"))
-            return f"Card tracker reset: {state_path}"
+            self.root.after(0, lambda: self.last_core_var.set("棋子计数已重置"))
+            self._queue_panel("stars", "三星警告 / 商店必买\n- 棋子计数已重置。")
+            return f"棋子计数已重置：{state_path}"
 
-        self._run_task("Resetting card counts", task)
+        self._run_task("重置棋子计数", task)
 
     def open_capture_folder(self) -> None:
         capture_dir = self._capture_dir()
         capture_dir.mkdir(parents=True, exist_ok=True)
         os.startfile(str(capture_dir))
-
-    def _capture_dir(self) -> Path:
-        capture_dir_text = self.capture_dir_var.get().strip()
-        if not capture_dir_text:
-            raise LDPlayerError("Please choose a capture folder first.")
-        return Path(capture_dir_text)
 
     def _on_close(self) -> None:
         try:

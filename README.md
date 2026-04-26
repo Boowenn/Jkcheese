@@ -24,7 +24,7 @@ Current module scope:
 - scout a manually opened opponent board from screenshots and count trained contested 4/5-cost targets
 - suggest main carry, main tank, and item direction from real-time S-tier lineups, shop hits, tracked cards, and optional item components
 - suggest when to level, save, small-D, or all-in from stage, level, gold, and HP
-- provide a simple Windows GUI
+- provide a Chinese dashboard EXE with left-side screenshot status and right-side recommendation panels
 - build a one-file EXE with PyInstaller
 - run unit tests
 - run CI on each push
@@ -45,6 +45,8 @@ Run the GUI:
 ```powershell
 python main.py
 ```
+
+The GUI is now the recommended beginner flow. Click `一键扫描当前局势` to capture the current emulator screen and refresh the right-side panels for current advice, S lineup recommendations, three-star/shop-hit warnings, chase odds, and item/main-carry reminders.
 
 Run the CLI:
 
@@ -242,12 +244,13 @@ py -3.14 -m pytest -q
 
 ## Current module
 
-`v0.12.0` includes the first eleven modules:
+`v0.13.0` includes the first twelve modules:
 
 - LDPlayer connection
 - game launch
 - screenshot pipeline
 - simple end-user GUI
+- module 12 Chinese dashboard layout with a left screenshot/status area and right recommendation panels
 - 1920x1080 in-game region presets
 - region crop export for gold, level, HP, traits, shop, bench, and opponents
 - lightweight local digit OCR for stage, gold, level, and HP
@@ -271,10 +274,12 @@ py -3.14 -m pytest -q
 - GUI Item Advice entry/button and Scan Shop integration for S-lineup carry/tank/item direction
 - module 11 stage/economy rhythm advice with `tempo` and `capture-tempo`
 - GUI Tempo Advice button and Scan Shop rhythm integration for level/save/small-D/all-in suggestions
+- one-click GUI scan that updates S lineup, star warnings, chase odds, item advice, tempo advice, and detailed logs together
 
 ## Next module
 
-The next planned module is a simpler end-user dashboard:
+The next planned module is live calibration and dashboard polish:
 
-- simplify the Chinese EXE layout into a left screenshot status / right recommendation dashboard
+- add easier in-GUI template labeling/calibration for shop and opponent scouting
+- improve screenshot preview and panel wording from more live-game examples
 - keep all behavior read-only
