@@ -170,6 +170,53 @@ def test_parser_reads_chase_command():
     assert args.cost_odds == 30
 
 
+def test_parser_reads_scout_scan_command():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "scout-scan",
+            "--input",
+            "screen.png",
+            "--templates",
+            "opponent_templates.json",
+            "--target",
+            "千珏",
+            "--regions",
+            "scout_board",
+            "bench",
+            "--threshold",
+            "0.9",
+        ]
+    )
+
+    assert args.command == "scout-scan"
+    assert str(args.input) == "screen.png"
+    assert str(args.templates) == "opponent_templates.json"
+    assert args.target == ["千珏"]
+    assert args.regions == ["scout_board", "bench"]
+    assert args.threshold == 0.9
+
+
+def test_parser_reads_capture_scout_command():
+    parser = build_parser()
+    args = parser.parse_args(["capture-scout", "--index", "1", "--target", "千珏", "--level", "8", "--gold", "30"])
+
+    assert args.command == "capture-scout"
+    assert args.index == 1
+    assert args.target == ["千珏"]
+    assert args.level == 8
+    assert args.gold == 30
+
+
+def test_parser_reads_scout_label_command():
+    parser = build_parser()
+    args = parser.parse_args(["scout-label", "--input", "screen.png", "--label", "千珏:4@720,420,90,80"])
+
+    assert args.command == "scout-label"
+    assert str(args.input) == "screen.png"
+    assert args.label == ["千珏:4@720,420,90,80"]
+
+
 def test_parser_reads_shop_scan_command():
     parser = build_parser()
     args = parser.parse_args(

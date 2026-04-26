@@ -13,6 +13,7 @@ from .card_tracker import (
     CoreAdviceReport,
     build_core_advice,
     format_core_advice,
+    load_card_state,
     reset_card_state,
 )
 from .chase_calculator import (
@@ -36,6 +37,17 @@ from .lineups import (
     recommend_lineups,
 )
 from .ocr import OcrReading, export_ocr_debug, read_screenshot
+from .opponent_monitor import (
+    DEFAULT_OPPONENT_TEMPLATE_PATH,
+    DEFAULT_SCOUT_REGIONS,
+    DEFAULT_SCOUT_STRIDE,
+    DEFAULT_SCOUT_THRESHOLD,
+    OpponentMonitorError,
+    format_opponent_scout,
+    label_scout_templates,
+    parse_scout_labels,
+    scan_opponent,
+)
 from .region_capture import crop_regions
 from .shop_recognition import (
     DEFAULT_CHAMPION_DICTIONARY_PATH,
@@ -144,6 +156,40 @@ def build_parser() -> argparse.ArgumentParser:
     chase.add_argument("--same-cost-units", type=int, default=None, help="Same-cost champion count override")
     chase.add_argument("--cost-odds", type=float, default=None, help="Override current cost odds as percent")
     chase.add_argument("--other-held", type=int, default=0, help="Other same-cost copies suspected out of pool")
+
+    scout_scan = subparsers.add_parser("scout-scan", help="Scan an opponent screenshot for trained 4/5-cost targets")
+    scout_scan.add_argument("--input", type=Path, required=True)
+    scout_scan.add_argument("--templates", type=Path, default=DEFAULT_OPPONENT_TEMPLATE_PATH)
+    scout_scan.add_argument("--output", type=Path, default=Path("captures") / "opponent_scout")
+    scout_scan.add_argument("--target", nargs="*", default=[], help="Only scan these trained card names")
+    scout_scan.add_argument("--regions", nargs="+", default=list(DEFAULT_SCOUT_REGIONS))
+    scout_scan.add_argument("--threshold", type=float, default=DEFAULT_SCOUT_THRESHOLD)
+    scout_scan.add_argument("--stride", type=int, default=DEFAULT_SCOUT_STRIDE)
+    scout_scan.add_argument("--no-debug", action="store_true")
+
+    capture_scout = subparsers.add_parser(
+        "capture-scout",
+        help="Capture the current manually selected opponent board and scan trained targets",
+    )
+    capture_scout.add_argument("--index", type=int, default=0)
+    capture_scout.add_argument("--output", type=Path, default=Path("captures") / "opponent_scout")
+    capture_scout.add_argument("--templates", type=Path, default=DEFAULT_OPPONENT_TEMPLATE_PATH)
+    capture_scout.add_argument("--target", nargs="*", default=[])
+    capture_scout.add_argument("--regions", nargs="+", default=list(DEFAULT_SCOUT_REGIONS))
+    capture_scout.add_argument("--threshold", type=float, default=DEFAULT_SCOUT_THRESHOLD)
+    capture_scout.add_argument("--stride", type=int, default=DEFAULT_SCOUT_STRIDE)
+    capture_scout.add_argument("--launch-if-needed", action="store_true")
+    capture_scout.add_argument("--state", type=Path, default=DEFAULT_CARD_STATE_PATH)
+    capture_scout.add_argument("--level", type=int, default=None)
+    capture_scout.add_argument("--gold", type=int, default=None)
+    capture_scout.add_argument("--reserve-gold", type=int, default=0)
+    capture_scout.add_argument("--focus-costs", nargs="+", type=int, default=[4, 5])
+
+    scout_label = subparsers.add_parser("scout-label", help="Teach opponent-scout templates from manual boxes")
+    scout_label.add_argument("--input", type=Path, required=True)
+    scout_label.add_argument("--label", nargs="+", required=True, help="Examples: 千珏:4@720,420,90,90")
+    scout_label.add_argument("--templates", type=Path, default=DEFAULT_OPPONENT_TEMPLATE_PATH)
+    scout_label.add_argument("--output", type=Path, default=Path("captures") / "opponent_templates")
 
     shop_scan = subparsers.add_parser("shop-scan", help="Scan shop slots from an existing screenshot")
     shop_scan.add_argument("--input", type=Path, required=True)
@@ -361,6 +407,31 @@ def run_cli(args: argparse.Namespace) -> int:
         print(format_chase_report(report))
         return 0
 
+    if args.command == "scout-scan":
+        output = None if args.no_debug else (args.output if args.output.is_absolute() else Path.cwd() / args.output)
+        report = scan_opponent(
+            args.input,
+            templates_path=args.templates,
+            output_dir=output,
+            target_names=tuple(args.target),
+            regions=tuple(args.regions),
+            threshold=args.threshold,
+            stride=args.stride,
+        )
+        print(format_opponent_scout(report))
+        return 0
+
+    if args.command == "scout-label":
+        templates = label_scout_templates(
+            args.input,
+            parse_scout_labels(args.label),
+            templates_path=args.templates,
+            output_dir=args.output if args.output.is_absolute() else Path.cwd() / args.output,
+        )
+        target = args.templates if args.templates.is_absolute() else Path.cwd() / args.templates
+        print(f"Saved {len(templates)} opponent scout templates to: {target.resolve()}")
+        return 0
+
     if args.command == "shop-scan":
         output = None if args.no_debug else (args.output if args.output.is_absolute() else Path.cwd() / args.output)
         report = scan_shop(
@@ -489,6 +560,44 @@ def run_cli(args: argparse.Namespace) -> int:
         _print_core_advice(report)
         return 0
 
+    if args.command == "capture-scout":
+        base_output = args.output if args.output.is_absolute() else Path.cwd() / args.output
+        session_dir = base_output / time.strftime("%Y%m%d_%H%M%S")
+        screenshot_path = session_dir / "screen.png"
+        saved = client.capture_screenshot(args.index, screenshot_path, launch_if_needed=args.launch_if_needed)
+        scout_report = scan_opponent(
+            saved,
+            templates_path=args.templates,
+            output_dir=session_dir / "matches",
+            target_names=tuple(args.target),
+            regions=tuple(args.regions),
+            threshold=args.threshold,
+            stride=args.stride,
+        )
+        print(f"Screenshot saved to: {saved}")
+        print(format_opponent_scout(scout_report))
+
+        readings = read_screenshot(saved)
+        detected_level = args.level if args.level is not None else _reading_value(readings, "level")
+        detected_gold = args.gold if args.gold is not None else _reading_value(readings, "gold")
+        if detected_level is not None and detected_gold is not None:
+            state_path = args.state if args.state.is_absolute() else Path.cwd() / args.state
+            chase_reports = build_chase_reports_from_state(
+                load_card_state(state_path),
+                level=detected_level,
+                gold=detected_gold,
+                contested_counts=scout_report.contested_counts,
+                focus_costs=tuple(args.focus_costs),
+                reserve_gold=args.reserve_gold,
+            )
+            print("")
+            print(format_chase_reports(chase_reports))
+        else:
+            print("")
+            print("四费/五费追三概率:")
+            print("- 未能稳定读取等级或金币；可加 --level 和 --gold 让本次侦查直接更新追三判断。")
+        return 0
+
     if args.command == "capture-shop-scan":
         base_output = args.output if args.output.is_absolute() else Path.cwd() / args.output
         session_dir = base_output / time.strftime("%Y%m%d_%H%M%S")
@@ -575,6 +684,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {exc}")
         return 1
     except ChaseCalculatorError as exc:
+        print(f"Error: {exc}")
+        return 1
+    except OpponentMonitorError as exc:
         print(f"Error: {exc}")
         return 1
     except KeyboardInterrupt:

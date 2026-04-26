@@ -59,6 +59,7 @@ GAME_1920X1080 = RegionPreset(
         Region("player_hp", 1695, 104, 210, 92),
         Region("traits", 110, 110, 275, 410),
         Region("opponents", 1686, 95, 230, 755),
+        Region("scout_board", 420, 235, 1080, 490),
         Region("bench", 410, 704, 1120, 112),
         Region("shop", 260, 856, 1420, 224),
         Region("shop_buy_xp", 280, 878, 188, 84),

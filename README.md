@@ -21,6 +21,7 @@ Current module scope:
 - recognize Chinese shop card names with local offline candidate OCR
 - warn immediately when a shop card is a tracked two-star/three-star hit or S-lineup key card
 - estimate 4-cost and 5-cost three-star chase odds from pool, owned copies, contested copies, level, and gold
+- scout a manually opened opponent board from screenshots and count trained contested 4/5-cost targets
 - provide a simple Windows GUI
 - build a one-file EXE with PyInstaller
 - run unit tests
@@ -174,6 +175,16 @@ When scanning the live shop, level and gold are read from the screenshot when po
 python main.py capture-shop-scan --index 0 --owned 4费千珏x8 --level 8 --gold 30 --contested 千珏=1
 ```
 
+Scout opponents after you manually switch to their board. First teach a tight visual template from a screenshot crop, then scan future opponent screenshots:
+
+```powershell
+python main.py scout-label --input captures\opponent.png --label 千珏:4@720,420,90,90
+python main.py scout-scan --input captures\opponent.png --target 千珏
+python main.py capture-scout --index 0 --target 千珏 --level 8 --gold 30
+```
+
+`capture-scout` only captures the current screen. It does not switch opponents, click the game, or read game memory. The output includes a `Contested 参数` line such as `千珏=2`, which can be used directly in the chase calculator.
+
 Build the EXE:
 
 ```powershell
@@ -201,7 +212,7 @@ py -3.14 -m pytest -q
 
 ## Current module
 
-`v0.9.0` includes the first eight modules:
+`v0.10.0` includes the first nine modules:
 
 - LDPlayer connection
 - game launch
@@ -224,12 +235,13 @@ py -3.14 -m pytest -q
 - GUI Scan Shop button that feeds recognized shop names into the S-line recommendation flow
 - module 8 four/five-cost chase calculator with `chase`
 - automatic chase estimates in `capture-shop-scan` and the GUI Scan Shop flow when level and gold OCR are readable
+- module 9 opponent/card monitoring with `scout-label`, `scout-scan`, and `capture-scout`
+- GUI Scout Opponent button for the board you manually opened
 
 ## Next module
 
-The next planned module is opponent/card monitoring and richer game-state awareness:
+The next planned module is item/main-carry guidance and richer game-state awareness:
 
-- add opponent/contested-card screenshot checks
 - add main carry/tank and item reminders from the current S-lineup source
 - add stage and economy rhythm suggestions
 - simplify the Chinese EXE layout into a left screenshot status / right recommendation dashboard

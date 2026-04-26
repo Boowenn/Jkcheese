@@ -8,12 +8,13 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from .advice import build_advice
-from .card_tracker import build_core_advice, format_core_advice, reset_card_state
+from .card_tracker import build_core_advice, format_core_advice, load_card_state, reset_card_state
 from .chase_calculator import build_chase_reports_from_state, format_chase_reports, visible_counts_from_shop
 from .config import AppConfig
 from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
 from .lineups import fetch_jcc_s_lineups, recommend_lineups
 from .ocr import read_screenshot
+from .opponent_monitor import format_opponent_scout, scan_opponent
 from .region_capture import crop_regions
 from .shop_hits import build_shop_hit_alerts, format_shop_hit_alerts
 from .shop_recognition import format_shop_scan, scan_shop as scan_shop_screenshot
@@ -130,14 +131,17 @@ class JkcheeseGui:
 
         self.core_button = ttk.Button(core, text="Core Advice", command=self.get_core_advice)
         self.shop_scan_button = ttk.Button(core, text="Scan Shop", command=self.scan_shop)
+        self.scout_button = ttk.Button(core, text="Scout Opponent", command=self.scout_opponent)
         self.reset_cards_button = ttk.Button(core, text="Reset Card Counts", command=self.reset_card_counts)
         self.core_button.grid(row=0, column=2, padx=(8, 0), pady=3, sticky="ew")
         self.shop_scan_button.grid(row=1, column=2, padx=(8, 0), pady=3, sticky="ew")
-        self.reset_cards_button.grid(row=0, column=3, rowspan=2, padx=(8, 0), pady=3, sticky="nsew")
+        self.scout_button.grid(row=0, column=3, padx=(8, 0), pady=3, sticky="ew")
+        self.reset_cards_button.grid(row=1, column=3, padx=(8, 0), pady=3, sticky="ew")
 
         hint = (
             "Live tokens rank S lineups. Owned copies drive cost-aware star warnings, "
             "e.g. 4费Vexx7, 五费Nami=3, or Vex@4x7. Focus is 4/5-cost units."
+            " Scout Opponent only captures the opponent board you manually opened."
             " Default pools: 1=30, 2=25, 3=18, 4=10, 5=9."
         )
         ttk.Label(core, text=hint).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
@@ -197,6 +201,7 @@ class JkcheeseGui:
             self.lineups_button,
             self.core_button,
             self.shop_scan_button,
+            self.scout_button,
             self.reset_cards_button,
             self.open_folder_button,
         ):
@@ -466,6 +471,41 @@ class JkcheeseGui:
             )
 
         self._run_task("Scanning shop", task)
+
+    def scout_opponent(self) -> None:
+        def task() -> str:
+            client = self._client()
+            index = self._current_index()
+            capture_dir = self._capture_dir()
+            session_dir = capture_dir / time.strftime("scout_%Y%m%d_%H%M%S")
+            screenshot_path = session_dir / "screen.png"
+            saved = client.capture_screenshot(index, screenshot_path, launch_if_needed=True)
+            report = scan_opponent(
+                saved,
+                templates_path=capture_dir / "opponent_templates.json",
+                output_dir=session_dir / "matches",
+            )
+            readings = read_screenshot(saved)
+            detected_level = _reading_value(readings, "level")
+            detected_gold = _reading_value(readings, "gold")
+            chase_output = "四费/五费追三概率:\n- 未能稳定读取等级或金币；可用 CLI capture-scout 加 --level/--gold。"
+            if detected_level is not None and detected_gold is not None:
+                chase_output = format_chase_reports(
+                    build_chase_reports_from_state(
+                        load_card_state(capture_dir / "card_state.json"),
+                        level=detected_level,
+                        gold=detected_gold,
+                        contested_counts=report.contested_counts,
+                    )
+                )
+
+            counts = report.contested_counts
+            summary = "; ".join(f"{name}={count}" for name, count in counts.items()) or "No scout match"
+            self.root.after(0, lambda: self.last_capture_var.set(str(saved)))
+            self.root.after(0, lambda: self.last_core_var.set(summary))
+            return format_opponent_scout(report) + "\n\n" + chase_output
+
+        self._run_task("Scouting opponent", task)
 
     def reset_card_counts(self) -> None:
         def task() -> str:
