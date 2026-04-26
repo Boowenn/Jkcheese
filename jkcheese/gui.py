@@ -124,6 +124,17 @@ def map_capture_box_to_screen(
     )
 
 
+def choose_highlight_target_rect(
+    auto_rect: ScreenRect | None,
+    manual_rect: ScreenRect | None,
+    *,
+    drag_enabled: bool,
+) -> ScreenRect | None:
+    if drag_enabled and manual_rect is not None:
+        return manual_rect
+    return auto_rect
+
+
 def _shorten(text: str, limit: int) -> str:
     normalized = " ".join(str(text).split())
     if len(normalized) <= limit:
@@ -189,7 +200,7 @@ def find_ldplayer_client_rect(preferred_title: str = "") -> ScreenRect | None:
     return ScreenRect(x=point.x, y=point.y, width=width, height=height)
 
 
-def _make_window_click_through(window: tk.Toplevel) -> None:
+def _set_window_click_through(window: tk.Toplevel, enabled: bool) -> None:
     if os.name != "nt":
         return
     user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -207,8 +218,17 @@ def _make_window_click_through(window: tk.Toplevel) -> None:
     ws_ex_toolwindow = 0x00000080
     ws_ex_noactivate = 0x08000000
     style = get_long(hwnd, gwl_exstyle)
-    style |= ws_ex_transparent | ws_ex_layered | ws_ex_toolwindow | ws_ex_noactivate
+    style |= ws_ex_layered | ws_ex_toolwindow
+    if enabled:
+        style |= ws_ex_transparent | ws_ex_noactivate
+    else:
+        style &= ~ws_ex_transparent
+        style &= ~ws_ex_noactivate
     set_long(hwnd, gwl_exstyle, style)
+
+
+def _make_window_click_through(window: tk.Toplevel) -> None:
+    _set_window_click_through(window, True)
 
 
 def _reading_value(readings, name: str) -> int | None:
@@ -275,8 +295,8 @@ class JkcheeseGui:
         self.config = AppConfig.load()
         self.root = tk.Tk()
         self.root.title(f"金铲铲只读助手 Jkcheese v{__version__}")
-        self.root.geometry("1320x860")
-        self.root.minsize(1180, 760)
+        self.root.geometry(self._default_main_geometry())
+        self.root.minsize(960, 620)
         self.root.configure(bg=ROOT_BG)
 
         self.ldplayer_root_var = tk.StringVar(value=self.config.ldplayer_root)
@@ -297,6 +317,7 @@ class JkcheeseGui:
         self.last_tempo_var = tk.StringVar(value="-")
         self.auto_scan_var = tk.BooleanVar(value=self.config.auto_scan_enabled)
         self.overlay_enabled_var = tk.BooleanVar(value=self.config.overlay_enabled)
+        self.highlight_drag_var = tk.BooleanVar(value=self.config.highlight_drag_enabled)
         self.auto_scan_status_var = tk.StringVar(value="自动识别：等待启动")
         self.cleanup_status_var = tk.StringVar(value="自动清理：对局结束后清理本局截图")
         self.auto_shop_var = tk.StringVar(value="商店：等待识别")
@@ -319,6 +340,8 @@ class JkcheeseGui:
         self._overlay_drag: tuple[int, int] | None = None
         self._highlight_overlay: tk.Toplevel | None = None
         self._highlight_canvas: tk.Canvas | None = None
+        self._highlight_drag: tuple[int, int] | None = None
+        self._highlight_manual_rect: ScreenRect | None = None
         self._panels: dict[str, tk.Text] = {}
 
         self._build_ui()
@@ -327,13 +350,22 @@ class JkcheeseGui:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(1000, self._schedule_auto_scan)
 
+    def _default_main_geometry(self) -> str:
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        width = min(1220, max(960, screen_width - 80))
+        height = min(720, max(620, screen_height - 120))
+        x = max(0, (screen_width - width) // 2)
+        y = max(0, (screen_height - height) // 3)
+        return f"{width}x{height}+{x}+{y}"
+
     def _build_ui(self) -> None:
         self._configure_styles()
-        self.root.columnconfigure(0, weight=0, minsize=430)
+        self.root.columnconfigure(0, weight=0, minsize=390)
         self.root.columnconfigure(1, weight=1)
         self.root.rowconfigure(1, weight=1)
 
-        header = tk.Frame(self.root, bg=DARK_BG, padx=20, pady=14)
+        header = tk.Frame(self.root, bg=DARK_BG, padx=20, pady=10)
         header.grid(row=0, column=0, columnspan=2, sticky="ew")
         header.columnconfigure(0, weight=1)
         tk.Label(
@@ -365,11 +397,9 @@ class JkcheeseGui:
         )
         self.primary_button.grid(row=0, column=1, rowspan=2, sticky="e")
 
-        left = tk.Frame(self.root, bg=ROOT_BG, padx=14, pady=14)
-        left.grid(row=1, column=0, sticky="nsew")
-        left.columnconfigure(0, weight=1)
+        left = self._build_left_scroll_column()
 
-        right = tk.Frame(self.root, bg="#f7f1e3", padx=14, pady=14)
+        right = tk.Frame(self.root, bg="#f7f1e3", padx=12, pady=10)
         right.grid(row=1, column=1, sticky="nsew")
         right.columnconfigure(0, weight=1)
         right.columnconfigure(1, weight=1)
@@ -379,6 +409,37 @@ class JkcheeseGui:
         self._build_snapshot_card(left)
         self._build_inputs_card(left)
         self._build_right_dashboard(right)
+
+    def _build_left_scroll_column(self) -> tk.Frame:
+        outer = tk.Frame(self.root, bg=ROOT_BG, padx=10, pady=10)
+        outer.grid(row=1, column=0, sticky="nsew")
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(0, weight=1)
+
+        canvas = tk.Canvas(outer, bg=ROOT_BG, highlightthickness=0, width=400)
+        scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        frame = tk.Frame(canvas, bg=ROOT_BG)
+        frame.columnconfigure(0, weight=1)
+        window_id = canvas.create_window((0, 0), window=frame, anchor="nw")
+
+        def update_scroll_region(_event=None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def update_window_width(event) -> None:
+            canvas.itemconfigure(window_id, width=event.width)
+
+        def on_mousewheel(event) -> None:
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        frame.bind("<Configure>", update_scroll_region)
+        canvas.bind("<Configure>", update_window_width)
+        canvas.bind("<Enter>", lambda _event: canvas.bind_all("<MouseWheel>", on_mousewheel))
+        canvas.bind("<Leave>", lambda _event: canvas.unbind_all("<MouseWheel>"))
+        return frame
 
     def _build_overlay(self) -> None:
         overlay = tk.Toplevel(self.root)
@@ -439,10 +500,14 @@ class JkcheeseGui:
             relief="flat",
         )
         canvas.pack(fill="both", expand=True)
+        overlay.bind("<ButtonPress-1>", self._start_highlight_drag)
+        overlay.bind("<B1-Motion>", self._drag_highlight)
+        canvas.bind("<ButtonPress-1>", self._start_highlight_drag)
+        canvas.bind("<B1-Motion>", self._drag_highlight)
         self._highlight_overlay = overlay
         self._highlight_canvas = canvas
         overlay.update_idletasks()
-        _make_window_click_through(overlay)
+        _set_window_click_through(overlay, not self.highlight_drag_var.get())
 
     def _default_overlay_geometry(self) -> str:
         width = 340
@@ -466,6 +531,25 @@ class JkcheeseGui:
         self._overlay.geometry(f"+{x}+{y}")
         self._overlay_drag = (event.x_root, event.y_root)
 
+    def _start_highlight_drag(self, event) -> None:
+        if not self.highlight_drag_var.get():
+            return
+        self._highlight_drag = (event.x_root, event.y_root)
+
+    def _drag_highlight(self, event) -> None:
+        if not self.highlight_drag_var.get() or self._highlight_overlay is None or self._highlight_drag is None:
+            return
+        old_x, old_y = self._highlight_drag
+        delta_x = event.x_root - old_x
+        delta_y = event.y_root - old_y
+        x = self._highlight_overlay.winfo_x() + delta_x
+        y = self._highlight_overlay.winfo_y() + delta_y
+        width = self._highlight_overlay.winfo_width()
+        height = self._highlight_overlay.winfo_height()
+        self._highlight_overlay.geometry(f"+{x}+{y}")
+        self._highlight_manual_rect = ScreenRect(x=x, y=y, width=width, height=height)
+        self._highlight_drag = (event.x_root, event.y_root)
+
     def _draw_shop_highlights(self, alerts, source_size: tuple[int, int]) -> None:
         if self._highlight_overlay is None or self._highlight_canvas is None:
             return
@@ -478,7 +562,11 @@ class JkcheeseGui:
             self._hide_shop_highlights()
             return
 
-        rect = find_ldplayer_client_rect(self.instance_name_var.get())
+        rect = choose_highlight_target_rect(
+            find_ldplayer_client_rect(self.instance_name_var.get()),
+            self._highlight_manual_rect,
+            drag_enabled=self.highlight_drag_var.get(),
+        )
         if rect is None:
             self._hide_shop_highlights()
             self.auto_scan_status_var.set("自动识别：已更新，未定位到雷电窗口")
@@ -525,10 +613,21 @@ class JkcheeseGui:
                 )
                 canvas.tag_raise(text_id, bg_id)
 
+        if self.highlight_drag_var.get():
+            canvas.create_rectangle(8, 8, 188, 36, fill="#17362f", outline="#ffd60a", width=2)
+            canvas.create_text(
+                18,
+                15,
+                text="拖动这里校准高亮框",
+                anchor="nw",
+                fill="#fff7e4",
+                font=("Microsoft YaHei UI", 10, "bold"),
+            )
+
         overlay.deiconify()
         overlay.lift()
         overlay.attributes("-topmost", True)
-        _make_window_click_through(overlay)
+        _set_window_click_through(overlay, not self.highlight_drag_var.get())
 
     def _hide_shop_highlights(self) -> None:
         if self._highlight_canvas is not None:
@@ -545,6 +644,18 @@ class JkcheeseGui:
         else:
             self._overlay.withdraw()
             self._hide_shop_highlights()
+        self._save_config()
+
+    def _on_highlight_drag_toggled(self) -> None:
+        enabled = self.highlight_drag_var.get()
+        if not enabled:
+            self._highlight_manual_rect = None
+        if self._highlight_overlay is not None:
+            _set_window_click_through(self._highlight_overlay, not enabled)
+        if enabled:
+            self.auto_scan_status_var.set("高亮框校准：可拖动，调完请取消勾选")
+        else:
+            self.auto_scan_status_var.set("高亮框校准：已锁定雷电窗口并点击穿透")
         self._save_config()
 
     def _on_auto_settings_changed(self) -> None:
@@ -612,6 +723,7 @@ class JkcheeseGui:
         auto_bar.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(8, 0))
         auto_bar.columnconfigure(0, weight=1)
         auto_bar.columnconfigure(1, weight=1)
+        auto_bar.columnconfigure(2, weight=1)
         self.auto_scan_check = ttk.Checkbutton(
             auto_bar,
             text="自动识别商店",
@@ -624,8 +736,15 @@ class JkcheeseGui:
             variable=self.overlay_enabled_var,
             command=self._on_overlay_toggled,
         )
+        self.highlight_drag_check = ttk.Checkbutton(
+            auto_bar,
+            text="拖动校准高亮框",
+            variable=self.highlight_drag_var,
+            command=self._on_highlight_drag_toggled,
+        )
         self.auto_scan_check.grid(row=0, column=0, sticky="w")
         self.overlay_check.grid(row=0, column=1, sticky="w")
+        self.highlight_drag_check.grid(row=0, column=2, sticky="w")
 
         status = tk.Frame(card, bg="#f0e6d2", padx=8, pady=8)
         status.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(10, 0))
@@ -718,12 +837,12 @@ class JkcheeseGui:
         ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
     def _build_right_dashboard(self, parent: tk.Widget) -> None:
-        self._panel(parent, "current", "当前建议", row=0, column=0, columnspan=2, height=7)
-        self._panel(parent, "lineups", "S 阵容推荐", row=1, column=0, height=9)
-        self._panel(parent, "stars", "三星警告 / 商店必买", row=1, column=1, height=9)
-        self._panel(parent, "chase", "追三概率", row=2, column=0, height=8)
-        self._panel(parent, "items", "装备和主 C", row=2, column=1, height=8)
-        self._panel(parent, "log", "运行日志 / 详细结果", row=3, column=0, columnspan=2, height=10)
+        self._panel(parent, "current", "当前建议", row=0, column=0, columnspan=2, height=5)
+        self._panel(parent, "lineups", "S 阵容推荐", row=1, column=0, height=6)
+        self._panel(parent, "stars", "三星警告 / 商店必买", row=1, column=1, height=6)
+        self._panel(parent, "chase", "追三概率", row=2, column=0, height=5)
+        self._panel(parent, "items", "装备和主 C", row=2, column=1, height=5)
+        self._panel(parent, "log", "运行日志 / 详细结果", row=3, column=0, columnspan=2, height=5)
 
         self._set_panel("current", "点击“一键扫描当前局势”，这里会显示该升人口、存钱、小 D 还是 all in。")
         self._set_panel("lineups", "等待扫描。")
@@ -792,6 +911,7 @@ class JkcheeseGui:
         self.config.capture_dir = self.capture_dir_var.get().strip()
         self.config.auto_scan_enabled = self.auto_scan_var.get()
         self.config.overlay_enabled = self.overlay_enabled_var.get()
+        self.config.highlight_drag_enabled = self.highlight_drag_var.get()
         self.config.save()
 
     def _current_index(self) -> int:
@@ -825,6 +945,7 @@ class JkcheeseGui:
             self.open_folder_button,
             self.auto_scan_check,
             self.overlay_check,
+            self.highlight_drag_check,
         ):
             button.configure(state=state)
 

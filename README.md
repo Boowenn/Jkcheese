@@ -244,7 +244,7 @@ py -3.14 -m pytest -q
 
 ## Current module
 
-`v0.13.1` includes the first twelve modules plus a usability fix pass:
+`v0.13.2` includes the first twelve modules plus a usability fix pass:
 
 - LDPlayer connection
 - game launch
@@ -278,6 +278,8 @@ py -3.14 -m pytest -q
 - automatic in-game shop scanning for the GUI, using a reusable `_live` screenshot so background scans do not flood the disk
 - right-top semi-transparent overlay for live "buy this slot", S lineup, chase risk, and tempo hints without switching away from the game
 - click-through shop-slot highlight boxes that frame visible key cards directly over the LDPlayer shop when the window can be located
+- draggable shop highlight calibration mode for misaligned overlays; turn it off after calibration to restore click-through play
+- compact small-screen dashboard with a shorter default window, scrollable left column, and tighter right-side panels
 - read-only live alerts only: the helper can tell you which visible slot to buy, but it never clicks, buys, rolls, or controls the game
 - automatic capture cleanup: generated screenshots are retained briefly during a match, and when the match appears to end the tool clears match screenshots and resets match card counts
 - single-instance GUI guard so double-clicking the EXE does not open two helper windows

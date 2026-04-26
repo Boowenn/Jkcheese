@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from jkcheese.gui import (
     ScreenRect,
     build_shop_highlights,
+    choose_highlight_target_rect,
     format_overlay_summary,
     format_reading_summary,
     map_capture_box_to_screen,
@@ -66,3 +67,11 @@ def test_map_capture_box_to_screen_scales_to_window_client_rect():
     )
 
     assert mapped == (480, 270, 720, 405)
+
+
+def test_choose_highlight_target_rect_uses_manual_rect_only_while_dragging():
+    auto_rect = ScreenRect(x=10, y=20, width=300, height=200)
+    manual_rect = ScreenRect(x=40, y=50, width=300, height=200)
+
+    assert choose_highlight_target_rect(auto_rect, manual_rect, drag_enabled=True) == manual_rect
+    assert choose_highlight_target_rect(auto_rect, manual_rect, drag_enabled=False) == auto_rect

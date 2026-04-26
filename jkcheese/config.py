@@ -42,6 +42,7 @@ class AppConfig:
     auto_scan_enabled: bool = True
     auto_scan_interval_seconds: int = 12
     overlay_enabled: bool = True
+    highlight_drag_enabled: bool = False
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -75,6 +76,10 @@ class AppConfig:
             minimum=5,
         )
         config.overlay_enabled = _safe_bool(payload.get("overlay_enabled"), config.overlay_enabled)
+        config.highlight_drag_enabled = _safe_bool(
+            payload.get("highlight_drag_enabled"),
+            config.highlight_drag_enabled,
+        )
         return config
 
     def save(self) -> None:
