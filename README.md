@@ -15,7 +15,7 @@ Current module scope:
 - export OCR debug crops for calibration
 - fetch S-tier Golden Spatula lineups from the public `实时铲榜` Tencent Docs sheet
 - recommend S-tier lineups from live card/name tokens
-- track owned card copies and warn for pairs, two-star, and three-star progress
+- track owned card copies and warn for cost-aware 4/5-cost star progress
 - combine live tokens, owned cards, and current S-tier lineups into one core advice view
 - provide a simple Windows GUI
 - build a one-file EXE with PyInstaller
@@ -99,14 +99,16 @@ python main.py recommend-lineup --seen 机甲 远征
 Get the core advice loop with S-tier recommendations and star warnings:
 
 ```powershell
-python main.py core-advice --seen 机甲 远征 --owned 薇古丝x7 --reset
+python main.py core-advice --seen 机甲 远征 --owned 4费薇古丝x7 --reset
 ```
 
 Track additional owned copies during the same game:
 
 ```powershell
-python main.py core-advice --seen 机甲 --owned 薇古丝x1
+python main.py core-advice --seen 机甲 --owned 4费薇古丝x1
 ```
+
+The card tracker understands cost-aware forms such as `4费薇古丝x7`, `五费安妮=3`, `4费 薇古丝x7`, and `薇古丝@4x7`. By default, star warnings focus on 4-cost and 5-cost units because they are the most valuable and scarce three-star targets.
 
 Clear the local card count tracker between games:
 
@@ -153,7 +155,8 @@ py -3.14 -m pytest -q
 - confidence warnings, debug exports, and basic economy advice
 - read-only `实时铲榜` S-tier lineup fetching and token-based S lineup recommendation
 - card count tracking for owned copies
-- pair, two-star, seven/eight-copy, and three-star warnings
+- cost-aware pair, two-star, four/five-copy, seven/eight-copy, and three-star warnings
+- default 4/5-cost focus so low-cost shop noise does not drown out real win-condition alerts
 - a GUI core helper panel for live tokens, owned copies, S-line recommendations, and upgrade warnings
 
 ## Next module

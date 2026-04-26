@@ -12,7 +12,13 @@ from .lineups import Lineup, LineupRecommendation, recommend_lineups
 
 DEFAULT_CARD_STATE_PATH = Path("captures") / "card_state.json"
 TOKEN_SPLIT_RE = re.compile(r"[\s,，、/|;；]+")
-COUNT_SUFFIX_RE = re.compile(r"^(?P<name>.+?)(?:[xX*×:=：])(?P<count>\d+)$")
+COUNT_SUFFIX_RE = re.compile(r"^(?P<name>.+?)(?:[xX*×=])(?P<count>\d+)$")
+COST_PREFIX_RE = re.compile(r"^(?P<cost>[1-5一二三四五])费(?P<name>.+)$")
+COST_SUFFIX_RE = re.compile(r"^(?P<name>.+?)(?P<cost>[1-5一二三四五])费$")
+COST_MARK_RE = re.compile(r"^(?P<name>.+?)[@#:]?(?:cost|c|费)?(?P<cost>[1-5一二三四五])$", re.IGNORECASE)
+COST_ONLY_RE = re.compile(r"^(?P<cost>[1-5一二三四五])费$")
+DEFAULT_FOCUS_COSTS = (4, 5)
+CHINESE_COSTS = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5}
 STATE_VERSION = 1
 
 
@@ -23,6 +29,7 @@ class CardTrackerError(RuntimeError):
 @dataclass(slots=True)
 class CardTrackerState:
     counts: dict[str, int] = field(default_factory=dict)
+    costs: dict[str, int] = field(default_factory=dict)
     updated_at: str = ""
 
 
@@ -30,12 +37,14 @@ class CardTrackerState:
 class ParsedTokenCount:
     token: str
     count: int
+    cost: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class UpgradeWarning:
     token: str
     count: int
+    cost: int | None
     severity: str
     title: str
     detail: str
@@ -49,6 +58,7 @@ class CoreAdviceReport:
     seen_tokens: tuple[str, ...]
     owned_updates: tuple[ParsedTokenCount, ...]
     recommendation_tokens: tuple[str, ...]
+    focus_costs: tuple[int, ...]
     warnings: tuple[UpgradeWarning, ...]
     recommendations: tuple[LineupRecommendation, ...]
 
@@ -72,21 +82,28 @@ def normalize_tokens(values: str | Iterable[str]) -> tuple[str, ...]:
 
 
 def parse_owned_counts(values: str | Iterable[str]) -> tuple[ParsedTokenCount, ...]:
-    """Parse owned card counts such as Vexx7, Vex=7, or repeated Vex tokens."""
+    """Parse owned cards such as Vexx7, 4费Vexx7, 五费Vex=3, or Vex@4x7."""
 
     totals: dict[str, int] = {}
+    costs: dict[str, int] = {}
+    pending_cost: int | None = None
     for token in normalize_tokens(values):
-        match = COUNT_SUFFIX_RE.match(token)
-        if match:
-            name = match.group("name").strip()
-            count = int(match.group("count"))
-        else:
-            name = token
-            count = 1
+        cost_only = COST_ONLY_RE.match(token)
+        if cost_only:
+            pending_cost = _parse_cost(cost_only.group("cost"))
+            continue
+
+        name, count, cost = _parse_owned_token(token)
+        if cost is None and pending_cost is not None:
+            cost = pending_cost
+        pending_cost = None
+
         if not name or count <= 0:
             continue
         totals[name] = totals.get(name, 0) + count
-    return tuple(ParsedTokenCount(token=token, count=count) for token, count in totals.items())
+        if cost is not None:
+            costs[name] = cost
+    return tuple(ParsedTokenCount(token=token, count=count, cost=costs.get(token)) for token, count in totals.items())
 
 
 def load_card_state(path: Path = DEFAULT_CARD_STATE_PATH) -> CardTrackerState:
@@ -101,6 +118,9 @@ def load_card_state(path: Path = DEFAULT_CARD_STATE_PATH) -> CardTrackerState:
     raw_counts = payload.get("counts", {})
     if not isinstance(raw_counts, dict):
         raw_counts = {}
+    raw_costs = payload.get("costs", {})
+    if not isinstance(raw_costs, dict):
+        raw_costs = {}
 
     counts: dict[str, int] = {}
     for token, count in raw_counts.items():
@@ -111,8 +131,17 @@ def load_card_state(path: Path = DEFAULT_CARD_STATE_PATH) -> CardTrackerState:
         if normalized_count > 0:
             counts[str(token)] = normalized_count
 
+    costs: dict[str, int] = {}
+    for token, cost in raw_costs.items():
+        try:
+            normalized_cost = int(cost)
+        except (TypeError, ValueError):
+            continue
+        if normalized_cost in range(1, 6) and str(token) in counts:
+            costs[str(token)] = normalized_cost
+
     updated_at = str(payload.get("updated_at", ""))
-    return CardTrackerState(counts=counts, updated_at=updated_at)
+    return CardTrackerState(counts=counts, costs=costs, updated_at=updated_at)
 
 
 def save_card_state(state: CardTrackerState, path: Path = DEFAULT_CARD_STATE_PATH) -> None:
@@ -120,6 +149,7 @@ def save_card_state(state: CardTrackerState, path: Path = DEFAULT_CARD_STATE_PAT
         "version": STATE_VERSION,
         "updated_at": state.updated_at,
         "counts": dict(sorted(state.counts.items(), key=lambda item: (-item[1], item[0]))),
+        "costs": dict(sorted(state.costs.items(), key=lambda item: item[0])),
     }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -146,12 +176,15 @@ def apply_owned_counts(
 
     if mode == "replace":
         state.counts = {}
+        state.costs = {}
 
     for item in updates:
         if mode == "add":
             state.counts[item.token] = state.counts.get(item.token, 0) + item.count
         else:
             state.counts[item.token] = item.count
+        if item.cost is not None:
+            state.costs[item.token] = item.cost
 
     if updates or mode == "replace":
         state.updated_at = _now()
@@ -161,10 +194,12 @@ def apply_owned_counts(
 def build_upgrade_warnings(
     state: CardTrackerState,
     lineups: tuple[Lineup, ...] = (),
+    focus_costs: tuple[int, ...] = DEFAULT_FOCUS_COSTS,
 ) -> tuple[UpgradeWarning, ...]:
     warnings: list[UpgradeWarning] = []
     for token, count in sorted(state.counts.items(), key=lambda item: (-item[1], item[0])):
-        warning = _warning_for_count(token, count, _matching_lineup_names(token, lineups))
+        cost = state.costs.get(token)
+        warning = _warning_for_count(token, count, cost, _matching_lineup_names(token, lineups), focus_costs)
         if warning is not None:
             warnings.append(warning)
     return tuple(warnings)
@@ -179,6 +214,7 @@ def build_core_advice(
     mode: str = "add",
     reset: bool = False,
     limit: int = 5,
+    focus_costs: tuple[int, ...] = DEFAULT_FOCUS_COSTS,
 ) -> CoreAdviceReport:
     state = CardTrackerState(updated_at=_now()) if reset else load_card_state(state_path)
     owned_updates = apply_owned_counts(state, owned, mode=mode)
@@ -189,7 +225,7 @@ def build_core_advice(
     seen_tokens = normalize_tokens(seen)
     recommendation_tokens = _unique((*seen_tokens, *state.counts.keys()))
     recommendations = recommend_lineups(lineups, recommendation_tokens, limit=limit) if lineups else ()
-    warnings = build_upgrade_warnings(state, lineups)
+    warnings = build_upgrade_warnings(state, lineups, focus_costs=focus_costs)
 
     return CoreAdviceReport(
         state=state,
@@ -197,6 +233,7 @@ def build_core_advice(
         seen_tokens=seen_tokens,
         owned_updates=owned_updates,
         recommendation_tokens=recommendation_tokens,
+        focus_costs=focus_costs,
         warnings=warnings,
         recommendations=recommendations,
     )
@@ -207,11 +244,15 @@ def format_core_advice(report: CoreAdviceReport) -> str:
     if report.seen_tokens:
         lines.append("Live tokens: " + ", ".join(report.seen_tokens))
     if report.owned_updates:
-        updates = ", ".join(f"{item.token}+{item.count}" for item in report.owned_updates)
+        updates = ", ".join(f"{_display_token(item.token, item.cost)}+{item.count}" for item in report.owned_updates)
         lines.append("Owned update: " + updates)
+    lines.append("Focus costs: " + ", ".join(f"{cost}-cost" for cost in report.focus_costs))
 
     if report.state.counts:
-        counts = ", ".join(f"{token}={count}" for token, count in _sorted_counts(report.state.counts))
+        counts = ", ".join(
+            f"{_display_token(token, report.state.costs.get(token))}={count}"
+            for token, count in _sorted_counts(report.state.counts)
+        )
         lines.append("Tracked copies: " + counts)
     else:
         lines.append("Tracked copies: none")
@@ -223,7 +264,7 @@ def format_core_advice(report: CoreAdviceReport) -> str:
             related = f" | S line: {', '.join(warning.matched_lineups)}" if warning.matched_lineups else ""
             lines.append(f"- [{warning.severity}] {warning.title}: {warning.detail}{related}")
     else:
-        lines.append("- No pair or three-star warning yet.")
+        lines.append("- No focused 4/5-cost pair or three-star warning yet.")
 
     if report.recommendations:
         lines.append("")
@@ -239,14 +280,27 @@ def format_core_advice(report: CoreAdviceReport) -> str:
     return "\n".join(lines)
 
 
-def _warning_for_count(token: str, count: int, matched_lineups: tuple[str, ...]) -> UpgradeWarning | None:
+def _warning_for_count(
+    token: str,
+    count: int,
+    cost: int | None,
+    matched_lineups: tuple[str, ...],
+    focus_costs: tuple[int, ...],
+) -> UpgradeWarning | None:
     related = " This token appears in a current S-tier lineup." if matched_lineups else ""
+    cost_label = f"{cost}-cost " if cost is not None else ""
+    display = f"{cost_label}{token}"
+
+    if cost is not None and cost not in focus_costs and count < 9:
+        return None
+
     if count >= 9:
         return UpgradeWarning(
             token=token,
             count=count,
+            cost=cost,
             severity="complete",
-            title=f"{token} three-star complete",
+            title=f"{display} three-star complete",
             detail=f"{count}/9 copies tracked. Stop chasing extra copies and protect economy/positioning.{related}",
             matched_lineups=matched_lineups,
         )
@@ -254,45 +308,60 @@ def _warning_for_count(token: str, count: int, matched_lineups: tuple[str, ...])
         return UpgradeWarning(
             token=token,
             count=count,
+            cost=cost,
             severity="critical",
-            title=f"{token} one copy from three-star",
-            detail=f"{count}/9 copies tracked. Buy/hold this if it is part of your S-line plan.{related}",
+            title=f"{display} one copy from three-star",
+            detail=f"{count}/9 copies tracked. Buy/hold this immediately if it is part of your S-line plan.{related}",
             matched_lineups=matched_lineups,
         )
     if count == 7:
         return UpgradeWarning(
             token=token,
             count=count,
-            severity="high",
-            title=f"{token} close to three-star",
-            detail=f"{count}/9 copies tracked. Start protecting bench space and reroll timing.{related}",
+            cost=cost,
+            severity="critical" if cost in {4, 5} else "high",
+            title=f"{display} two copies from three-star",
+            detail=f"{count}/9 copies tracked. Protect bench space, scout duplicates, and plan reroll timing.{related}",
             matched_lineups=matched_lineups,
         )
     if count == 6:
         return UpgradeWarning(
             token=token,
             count=count,
-            severity="medium",
-            title=f"{token} three-star setup",
-            detail=f"{count}/9 copies tracked. You are entering real three-star territory.{related}",
+            cost=cost,
+            severity="high" if cost in {4, 5} else "medium",
+            title=f"{display} three-star setup",
+            detail=f"{count}/9 copies tracked. For 4/5-cost carries, start deciding whether the chase is worth economy and HP.{related}",
             matched_lineups=matched_lineups,
         )
-    if 3 <= count <= 5:
+    if count in {4, 5} and cost in {4, 5}:
         return UpgradeWarning(
             token=token,
             count=count,
-            severity="medium",
-            title=f"{token} two-star ready",
-            detail=f"{count}/9 copies tracked. Stabilize the upgraded unit before over-rerolling.{related}",
+            cost=cost,
+            severity="high" if cost == 5 else "medium",
+            title=f"{display} expensive three-star angle",
+            detail=f"{count}/9 copies tracked. This is early but valuable for 4/5-cost monitoring; hold if bench/economy allow.{related}",
             matched_lineups=matched_lineups,
         )
-    if count == 2:
+    if count == 3:
         return UpgradeWarning(
             token=token,
             count=count,
-            severity="info",
-            title=f"{token} pair",
-            detail=f"{count}/9 copies tracked. Watch the next shops for a quick upgrade.{related}",
+            cost=cost,
+            severity="high" if cost == 5 else "medium",
+            title=f"{display} two-star ready",
+            detail=f"{count}/9 copies tracked. Upgrade first, then decide whether a 4/5-cost three-star chase is realistic.{related}",
+            matched_lineups=matched_lineups,
+        )
+    if count == 2 and cost in {4, 5}:
+        return UpgradeWarning(
+            token=token,
+            count=count,
+            cost=cost,
+            severity="medium" if cost == 5 else "info",
+            title=f"{display} expensive pair",
+            detail=f"{count}/9 copies tracked. Watch shops closely; high-cost pairs are the start of real win-condition pivots.{related}",
             matched_lineups=matched_lineups,
         )
     return None
@@ -306,6 +375,39 @@ def _matching_lineup_names(token: str, lineups: tuple[Lineup, ...]) -> tuple[str
         if needle and needle in haystack:
             matches.append(lineup.name)
     return tuple(matches[:3])
+
+
+def _parse_owned_token(token: str) -> tuple[str, int, int | None]:
+    count = 1
+    name = token.strip()
+    count_match = COUNT_SUFFIX_RE.match(name)
+    if count_match:
+        name = count_match.group("name").strip()
+        count = int(count_match.group("count"))
+
+    cost: int | None = None
+    for pattern in (COST_PREFIX_RE, COST_SUFFIX_RE, COST_MARK_RE):
+        match = pattern.match(name)
+        if match:
+            name = match.group("name").strip()
+            cost = _parse_cost(match.group("cost"))
+            break
+
+    return name, count, cost
+
+
+def _parse_cost(value: str) -> int | None:
+    if value in CHINESE_COSTS:
+        return CHINESE_COSTS[value]
+    try:
+        cost = int(value)
+    except ValueError:
+        return None
+    return cost if cost in range(1, 6) else None
+
+
+def _display_token(token: str, cost: int | None) -> str:
+    return f"{token}({cost}费)" if cost is not None else f"{token}(费用未知)"
 
 
 def _sorted_counts(counts: dict[str, int]) -> tuple[tuple[str, int], ...]:

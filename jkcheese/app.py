@@ -114,10 +114,11 @@ def build_parser() -> argparse.ArgumentParser:
 def _add_core_advice_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--source", default=DEFAULT_LINEUP_URL)
     parser.add_argument("--seen", nargs="*", default=[], help="Current shop/trait/name tokens for lineup ranking")
-    parser.add_argument("--owned", nargs="*", default=[], help="Owned card counts, for example Vexx7 or Vex=7")
+    parser.add_argument("--owned", nargs="*", default=[], help="Owned card counts, for example 4费Vexx7 or 五费Nami=3")
     parser.add_argument("--state", type=Path, default=DEFAULT_CARD_STATE_PATH)
     parser.add_argument("--mode", choices=("add", "replace"), default="add")
     parser.add_argument("--reset", action="store_true", help="Start a fresh tracker before applying --owned")
+    parser.add_argument("--focus-costs", nargs="+", type=int, default=[4, 5], help="Card costs to monitor closely")
     parser.add_argument("--limit", type=int, default=5)
 
 
@@ -223,6 +224,7 @@ def run_cli(args: argparse.Namespace) -> int:
             mode=args.mode,
             reset=args.reset,
             limit=args.limit,
+            focus_costs=tuple(args.focus_costs),
         )
         _print_core_advice(report)
         return 0
@@ -329,6 +331,7 @@ def run_cli(args: argparse.Namespace) -> int:
             mode=args.mode,
             reset=args.reset,
             limit=args.limit,
+            focus_costs=tuple(args.focus_costs),
         )
         print(f"Screenshot saved to: {saved}")
         _print_core_advice(report)

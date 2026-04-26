@@ -124,8 +124,8 @@ class JkcheeseGui:
         self.reset_cards_button.grid(row=1, column=2, padx=(8, 0), pady=3, sticky="ew")
 
         hint = (
-            "Live tokens rank S lineups. Owned copies drive star warnings, e.g. Vexx7 or Vex=7. "
-            "This helper stays read-only."
+            "Live tokens rank S lineups. Owned copies drive cost-aware star warnings, "
+            "e.g. 4费Vexx7, 五费Nami=3, or Vex@4x7. Focus is 4/5-cost units."
         )
         ttk.Label(core, text=hint).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
 

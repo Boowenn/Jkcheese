@@ -99,9 +99,12 @@ def test_parser_reads_core_advice_command():
             "Mecha",
             "Vanguard",
             "--owned",
-            "Vexx7",
+            "4费Vexx7",
             "--mode",
             "replace",
+            "--focus-costs",
+            "4",
+            "5",
             "--limit",
             "3",
         ]
@@ -109,8 +112,9 @@ def test_parser_reads_core_advice_command():
 
     assert args.command == "core-advice"
     assert args.seen == ["Mecha", "Vanguard"]
-    assert args.owned == ["Vexx7"]
+    assert args.owned == ["4费Vexx7"]
     assert args.mode == "replace"
+    assert args.focus_costs == [4, 5]
     assert args.limit == 3
 
 
