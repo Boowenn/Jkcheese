@@ -20,6 +20,7 @@ Current module scope:
 - scan shop slots, export shop debug crops, and recognize locally labeled shop templates
 - recognize Chinese shop card names with local offline candidate OCR
 - warn immediately when a shop card is a tracked two-star/three-star hit or S-lineup key card
+- estimate 4-cost and 5-cost three-star chase odds from pool, owned copies, contested copies, level, and gold
 - provide a simple Windows GUI
 - build a one-file EXE with PyInstaller
 - run unit tests
@@ -158,6 +159,21 @@ Module 7 uses two local recognition paths: labeled card-art templates first, the
 {"champions": [{"name": "自定义棋子"}]}
 ```
 
+Estimate whether a four/five-cost three-star chase is worth the gold:
+
+```powershell
+python main.py chase --name 千珏 --cost 4 --owned 8 --contested 0 --level 8 --gold 30
+python main.py chase --name 五费主C --cost 5 --owned 6 --contested 2 --level 9 --gold 70 --cost-odds 15
+```
+
+The chase calculator is intentionally conservative: it reserves the gold needed to buy the remaining copies, then estimates how many rerolls and shop slots you can see. If your in-game probability bar differs from the default table, override it with `--cost-odds`.
+
+When scanning the live shop, level and gold are read from the screenshot when possible. If OCR is not stable in a fight/shop state, pass them manually:
+
+```powershell
+python main.py capture-shop-scan --index 0 --owned 4费千珏x8 --level 8 --gold 30 --contested 千珏=1
+```
+
 Build the EXE:
 
 ```powershell
@@ -185,7 +201,7 @@ py -3.14 -m pytest -q
 
 ## Current module
 
-`v0.8.0` includes the first seven modules plus shop-hit reminders:
+`v0.9.0` includes the first eight modules:
 
 - LDPlayer connection
 - game launch
@@ -206,12 +222,13 @@ py -3.14 -m pytest -q
 - offline Chinese shop-name OCR for common champion names
 - shop-hit alerts that say when to buy a visible card because it completes a two-star, pushes a four/five-cost chase, or matches an S-tier lineup
 - GUI Scan Shop button that feeds recognized shop names into the S-line recommendation flow
+- module 8 four/five-cost chase calculator with `chase`
+- automatic chase estimates in `capture-shop-scan` and the GUI Scan Shop flow when level and gold OCR are readable
 
 ## Next module
 
-The next planned module is the four/five-cost chase calculator and richer game-state awareness:
+The next planned module is opponent/card monitoring and richer game-state awareness:
 
-- estimate whether a 4-cost or 5-cost three-star chase is realistic from level, gold, owned copies, and suspected contested copies
 - add opponent/contested-card screenshot checks
 - add main carry/tank and item reminders from the current S-lineup source
 - add stage and economy rhythm suggestions

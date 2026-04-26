@@ -9,6 +9,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from .advice import build_advice
 from .card_tracker import build_core_advice, format_core_advice, reset_card_state
+from .chase_calculator import build_chase_reports_from_state, format_chase_reports, visible_counts_from_shop
 from .config import AppConfig
 from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
 from .lineups import fetch_jcc_s_lineups, recommend_lineups
@@ -17,6 +18,13 @@ from .region_capture import crop_regions
 from .shop_hits import build_shop_hit_alerts, format_shop_hit_alerts
 from .shop_recognition import format_shop_scan, scan_shop as scan_shop_screenshot
 from .version import __version__
+
+
+def _reading_value(readings, name: str) -> int | None:
+    for reading in readings:
+        if reading.name == name:
+            return reading.value
+    return None
 
 
 class JkcheeseGui:
@@ -418,6 +426,9 @@ class JkcheeseGui:
                 templates_path=capture_dir / "shop_templates.json",
                 champions_path=capture_dir / "champions.json",
             )
+            readings = read_screenshot(saved)
+            detected_level = _reading_value(readings, "level")
+            detected_gold = _reading_value(readings, "gold")
             lineups = fetch_jcc_s_lineups()
             core_report = build_core_advice(
                 state_path=capture_dir / "card_state.json",
@@ -431,6 +442,16 @@ class JkcheeseGui:
             lineup_summary = "; ".join(item.lineup.name for item in core_report.recommendations[:3])
             shop_summary = ", ".join(report.recognized_names) if report.recognized_names else "No named shop cards"
             hit_summary = "; ".join(f"槽位{alert.slot} {alert.name}" for alert in hit_alerts[:3])
+            chase_output = "四费/五费追三概率:\n- 未能稳定读取等级或金币；可用 CLI 的 chase 命令手动计算。"
+            if detected_level is not None and detected_gold is not None:
+                chase_output = format_chase_reports(
+                    build_chase_reports_from_state(
+                        core_report.state,
+                        level=detected_level,
+                        gold=detected_gold,
+                        visible_counts=visible_counts_from_shop(report),
+                    )
+                )
             self.root.after(0, lambda: self.last_capture_var.set(str(saved)))
             self.root.after(0, lambda: self.last_lineups_var.set(lineup_summary or "-"))
             self.root.after(0, lambda: self.last_core_var.set(hit_summary or shop_summary))
@@ -438,6 +459,8 @@ class JkcheeseGui:
                 format_shop_scan(report)
                 + "\n\n"
                 + format_shop_hit_alerts(hit_alerts)
+                + "\n\n"
+                + chase_output
                 + "\n\n"
                 + format_core_advice(core_report)
             )

@@ -15,6 +15,16 @@ from .card_tracker import (
     format_core_advice,
     reset_card_state,
 )
+from .chase_calculator import (
+    ChaseCalculatorError,
+    ChaseInput,
+    build_chase_report,
+    build_chase_reports_from_state,
+    format_chase_report,
+    format_chase_reports,
+    parse_contested_counts,
+    visible_counts_from_shop,
+)
 from .gui import JkcheeseGui
 from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
 from .lineups import (
@@ -121,6 +131,20 @@ def build_parser() -> argparse.ArgumentParser:
     reset_cards = subparsers.add_parser("reset-cards", help="Clear the local card count tracker")
     reset_cards.add_argument("--state", type=Path, default=DEFAULT_CARD_STATE_PATH)
 
+    chase = subparsers.add_parser("chase", help="Estimate 4/5-cost three-star chase odds")
+    chase.add_argument("--name", default="", help="Target card name")
+    chase.add_argument("--cost", type=int, required=True, help="Target cost, usually 4 or 5")
+    chase.add_argument("--owned", type=int, required=True, help="Copies you already own")
+    chase.add_argument("--contested", type=int, default=0, help="Suspected copies held by opponents")
+    chase.add_argument("--level", type=int, required=True)
+    chase.add_argument("--gold", type=int, required=True)
+    chase.add_argument("--reserve-gold", type=int, default=0)
+    chase.add_argument("--visible", type=int, default=0, help="Copies already visible in the current shop")
+    chase.add_argument("--pool-size", type=int, default=None, help="Per-champion pool size override")
+    chase.add_argument("--same-cost-units", type=int, default=None, help="Same-cost champion count override")
+    chase.add_argument("--cost-odds", type=float, default=None, help="Override current cost odds as percent")
+    chase.add_argument("--other-held", type=int, default=0, help="Other same-cost copies suspected out of pool")
+
     shop_scan = subparsers.add_parser("shop-scan", help="Scan shop slots from an existing screenshot")
     shop_scan.add_argument("--input", type=Path, required=True)
     shop_scan.add_argument("--output", type=Path, default=Path("captures") / "shop_scan")
@@ -145,6 +169,10 @@ def build_parser() -> argparse.ArgumentParser:
     capture_shop_scan.add_argument("--name-ocr-threshold", type=float, default=DEFAULT_NAME_OCR_THRESHOLD)
     capture_shop_scan.add_argument("--disable-name-ocr", action="store_true")
     capture_shop_scan.add_argument("--launch-if-needed", action="store_true")
+    capture_shop_scan.add_argument("--level", type=int, default=None, help="Manual level override for chase odds")
+    capture_shop_scan.add_argument("--gold", type=int, default=None, help="Manual gold override for chase odds")
+    capture_shop_scan.add_argument("--reserve-gold", type=int, default=0, help="Gold to preserve before chase odds")
+    capture_shop_scan.add_argument("--contested", nargs="*", default=[], help="Suspected contested copies, e.g. 千珏=2")
     _add_core_advice_args(capture_shop_scan)
 
     shop_label = subparsers.add_parser("shop-label", help="Label shop slots to teach local card templates")
@@ -212,6 +240,13 @@ def _print_lineup_recommendations(recommendations: tuple[LineupRecommendation, .
 
 def _print_core_advice(report: CoreAdviceReport) -> None:
     print(format_core_advice(report))
+
+
+def _reading_value(readings: list[OcrReading], name: str) -> int | None:
+    for reading in readings:
+        if reading.name == name:
+            return reading.value
+    return None
 
 
 def _parse_pool_sizes(value: str) -> dict[int, int]:
@@ -304,6 +339,26 @@ def run_cli(args: argparse.Namespace) -> int:
         state_path = args.state if args.state.is_absolute() else Path.cwd() / args.state
         reset_card_state(state_path)
         print(f"Card tracker reset: {state_path.resolve()}")
+        return 0
+
+    if args.command == "chase":
+        report = build_chase_report(
+            ChaseInput(
+                name=args.name,
+                cost=args.cost,
+                owned=args.owned,
+                contested=args.contested,
+                level=args.level,
+                gold=args.gold,
+                reserve_gold=args.reserve_gold,
+                visible=args.visible,
+                pool_size=args.pool_size,
+                same_cost_units=args.same_cost_units,
+                cost_odds_percent=args.cost_odds,
+                other_held=args.other_held,
+            )
+        )
+        print(format_chase_report(report))
         return 0
 
     if args.command == "shop-scan":
@@ -452,6 +507,9 @@ def run_cli(args: argparse.Namespace) -> int:
         print(f"Screenshot saved to: {saved}")
         print(format_shop_scan(scan_report))
 
+        readings = read_screenshot(saved)
+        detected_level = args.level if args.level is not None else _reading_value(readings, "level")
+        detected_gold = args.gold if args.gold is not None else _reading_value(readings, "gold")
         lineups = fetch_jcc_s_lineups(args.source)
         state_path = args.state if args.state.is_absolute() else Path.cwd() / args.state
         pool_sizes = _parse_pool_sizes(args.pool_sizes)
@@ -476,6 +534,22 @@ def run_cli(args: argparse.Namespace) -> int:
         )
         print("")
         print(format_shop_hit_alerts(hit_alerts))
+        if detected_level is not None and detected_gold is not None:
+            chase_reports = build_chase_reports_from_state(
+                core_report.state,
+                level=detected_level,
+                gold=detected_gold,
+                visible_counts=visible_counts_from_shop(scan_report),
+                contested_counts=parse_contested_counts(tuple(args.contested)),
+                focus_costs=tuple(args.focus_costs),
+                reserve_gold=args.reserve_gold,
+            )
+            print("")
+            print(format_chase_reports(chase_reports))
+        else:
+            print("")
+            print("四费/五费追三概率:")
+            print("- 未能稳定读取等级或金币；可用 `chase` 命令手动输入 level/gold 计算。")
         print("")
         _print_core_advice(core_report)
         return 0
@@ -498,6 +572,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {exc}")
         return 1
     except ShopRecognitionError as exc:
+        print(f"Error: {exc}")
+        return 1
+    except ChaseCalculatorError as exc:
         print(f"Error: {exc}")
         return 1
     except KeyboardInterrupt:

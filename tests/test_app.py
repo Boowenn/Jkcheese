@@ -138,6 +138,38 @@ def test_parser_reads_reset_cards_command():
     assert str(args.state) == "cards.json"
 
 
+def test_parser_reads_chase_command():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "chase",
+            "--name",
+            "千珏",
+            "--cost",
+            "4",
+            "--owned",
+            "8",
+            "--contested",
+            "1",
+            "--level",
+            "8",
+            "--gold",
+            "30",
+            "--cost-odds",
+            "30",
+        ]
+    )
+
+    assert args.command == "chase"
+    assert args.name == "千珏"
+    assert args.cost == 4
+    assert args.owned == 8
+    assert args.contested == 1
+    assert args.level == 8
+    assert args.gold == 30
+    assert args.cost_odds == 30
+
+
 def test_parser_reads_shop_scan_command():
     parser = build_parser()
     args = parser.parse_args(
@@ -166,11 +198,28 @@ def test_parser_reads_shop_scan_command():
 
 def test_parser_reads_capture_shop_scan_command():
     parser = build_parser()
-    args = parser.parse_args(["capture-shop-scan", "--index", "1", "--seen", "机甲"])
+    args = parser.parse_args(
+        [
+            "capture-shop-scan",
+            "--index",
+            "1",
+            "--seen",
+            "机甲",
+            "--level",
+            "8",
+            "--gold",
+            "30",
+            "--contested",
+            "千珏=2",
+        ]
+    )
 
     assert args.command == "capture-shop-scan"
     assert args.index == 1
     assert args.seen == ["机甲"]
+    assert args.level == 8
+    assert args.gold == 30
+    assert args.contested == ["千珏=2"]
 
 
 def test_parser_reads_shop_label_command():
