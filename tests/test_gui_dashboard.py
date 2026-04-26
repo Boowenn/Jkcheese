@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from jkcheese.gui import format_overlay_summary, format_reading_summary
+from types import SimpleNamespace
+
+from jkcheese.gui import (
+    ScreenRect,
+    build_shop_highlights,
+    format_overlay_summary,
+    format_reading_summary,
+    map_capture_box_to_screen,
+)
 from jkcheese.ocr import OcrReading
 
 
@@ -36,3 +44,25 @@ def test_format_overlay_summary_keeps_combat_hints_compact():
     assert "商店: 千珏, 盖伦, 薇古丝" in output
     assert "必买: 槽2买千珏" in output
     assert "S阵容: S级机甲九五" in output
+
+
+def test_shop_highlights_map_alerts_to_shop_slot_boxes():
+    highlights = build_shop_highlights(
+        [SimpleNamespace(slot=2, name="千珏", severity="critical", title="立刻买")],
+        (1920, 1080),
+    )
+
+    assert len(highlights) == 1
+    assert highlights[0].slot == 2
+    assert highlights[0].name == "千珏"
+    assert highlights[0].box == (728, 878, 957, 1064)
+
+
+def test_map_capture_box_to_screen_scales_to_window_client_rect():
+    mapped = map_capture_box_to_screen(
+        (960, 540, 1440, 810),
+        (1920, 1080),
+        ScreenRect(x=100, y=200, width=960, height=540),
+    )
+
+    assert mapped == (480, 270, 720, 405)

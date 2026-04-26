@@ -5,6 +5,9 @@ import re
 import threading
 import time
 import tkinter as tk
+import ctypes
+from ctypes import wintypes
+from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -21,6 +24,7 @@ from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
 from .lineups import fetch_jcc_s_lineups, recommend_lineups
 from .ocr import OcrReading, read_screenshot
 from .opponent_monitor import format_opponent_scout, scan_opponent
+from .regions import default_preset
 from .region_capture import crop_regions
 from .shop_hits import build_shop_hit_alerts, format_shop_hit_alerts
 from .shop_recognition import format_shop_scan, scan_shop as scan_shop_screenshot
@@ -36,6 +40,31 @@ DARK_BG = "#17362f"
 ACCENT = "#c77b2a"
 MATCH_STAGE_RE = re.compile(r"^[1-9]\s*-\s*[1-9]$")
 MATCH_END_CONFIRMATIONS = 2
+TRANSPARENT_COLOR = "#ff00ff"
+HIGHLIGHT_COLORS = {
+    "critical": "#ff3b30",
+    "high": "#ff9500",
+    "medium": "#ffd60a",
+    "info": "#30d5c8",
+    "skip": "#9aa0a6",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenRect:
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+@dataclass(frozen=True, slots=True)
+class ShopHighlight:
+    slot: int
+    name: str
+    severity: str
+    title: str
+    box: tuple[int, int, int, int]
 
 
 def format_overlay_summary(
@@ -56,6 +85,45 @@ def format_overlay_summary(
     return "\n".join(_shorten(line, 34) for line in lines)
 
 
+def build_shop_highlights(alerts, source_size: tuple[int, int]) -> tuple[ShopHighlight, ...]:
+    preset = default_preset()
+    highlights: list[ShopHighlight] = []
+    for alert in alerts:
+        slot = int(alert.slot)
+        if slot not in range(1, 6):
+            continue
+        box = preset.get(f"shop_slot_{slot}").box_for(source_size, preset.base_size)
+        highlights.append(
+            ShopHighlight(
+                slot=slot,
+                name=alert.name,
+                severity=alert.severity,
+                title=alert.title,
+                box=box,
+            )
+        )
+    return tuple(highlights)
+
+
+def map_capture_box_to_screen(
+    box: tuple[int, int, int, int],
+    source_size: tuple[int, int],
+    target: ScreenRect,
+) -> tuple[int, int, int, int]:
+    source_width, source_height = source_size
+    if source_width <= 0 or source_height <= 0:
+        return (0, 0, 0, 0)
+    scale_x = target.width / source_width
+    scale_y = target.height / source_height
+    left, top, right, bottom = box
+    return (
+        round(left * scale_x),
+        round(top * scale_y),
+        round(right * scale_x),
+        round(bottom * scale_y),
+    )
+
+
 def _shorten(text: str, limit: int) -> str:
     normalized = " ".join(str(text).split())
     if len(normalized) <= limit:
@@ -69,6 +137,78 @@ def _first_detail_line(text: str, marker: str) -> str:
         if marker in stripped:
             return stripped.lstrip("- ").strip()
     return ""
+
+
+def _image_size(path: Path) -> tuple[int, int]:
+    with Image.open(path) as image:
+        return image.size
+
+
+def find_ldplayer_client_rect(preferred_title: str = "") -> ScreenRect | None:
+    if os.name != "nt":
+        return None
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    candidates: list[tuple[int, str]] = []
+
+    enum_windows_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def callback(hwnd, _lparam) -> bool:
+        if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return True
+        buffer = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buffer, length + 1)
+        title = buffer.value.strip()
+        title_lower = title.lower()
+        preferred = preferred_title.strip().lower()
+        is_preferred = bool(preferred and preferred != "-" and preferred in title_lower)
+        is_ldplayer = any(token in title_lower for token in ("ldplayer", "雷电", "雷電", "leidian"))
+        if (is_preferred or is_ldplayer) and "jkcheese" not in title_lower:
+            candidates.append((int(hwnd), title))
+        return True
+
+    user32.EnumWindows(enum_windows_proc(callback), 0)
+    if not candidates:
+        return None
+
+    hwnd = wintypes.HWND(candidates[0][0])
+    client_rect = wintypes.RECT()
+    if not user32.GetClientRect(hwnd, ctypes.byref(client_rect)):
+        return None
+    point = wintypes.POINT(0, 0)
+    if not user32.ClientToScreen(hwnd, ctypes.byref(point)):
+        return None
+
+    width = max(0, client_rect.right - client_rect.left)
+    height = max(0, client_rect.bottom - client_rect.top)
+    if width <= 0 or height <= 0:
+        return None
+    return ScreenRect(x=point.x, y=point.y, width=width, height=height)
+
+
+def _make_window_click_through(window: tk.Toplevel) -> None:
+    if os.name != "nt":
+        return
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    hwnd = wintypes.HWND(window.winfo_id())
+    get_long = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
+    set_long = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
+    get_long.argtypes = (wintypes.HWND, ctypes.c_int)
+    get_long.restype = ctypes.c_ssize_t
+    set_long.argtypes = (wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t)
+    set_long.restype = ctypes.c_ssize_t
+
+    gwl_exstyle = -20
+    ws_ex_transparent = 0x00000020
+    ws_ex_layered = 0x00080000
+    ws_ex_toolwindow = 0x00000080
+    ws_ex_noactivate = 0x08000000
+    style = get_long(hwnd, gwl_exstyle)
+    style |= ws_ex_transparent | ws_ex_layered | ws_ex_toolwindow | ws_ex_noactivate
+    set_long(hwnd, gwl_exstyle, style)
 
 
 def _reading_value(readings, name: str) -> int | None:
@@ -177,10 +317,13 @@ class JkcheeseGui:
         self._preview_image = None
         self._overlay: tk.Toplevel | None = None
         self._overlay_drag: tuple[int, int] | None = None
+        self._highlight_overlay: tk.Toplevel | None = None
+        self._highlight_canvas: tk.Canvas | None = None
         self._panels: dict[str, tk.Text] = {}
 
         self._build_ui()
         self._build_overlay()
+        self._build_shop_highlight_overlay()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(1000, self._schedule_auto_scan)
 
@@ -279,6 +422,28 @@ class JkcheeseGui:
         self._overlay = overlay
         self._on_overlay_toggled()
 
+    def _build_shop_highlight_overlay(self) -> None:
+        overlay = tk.Toplevel(self.root)
+        overlay.title("Jkcheese 商店高亮")
+        overlay.overrideredirect(True)
+        overlay.attributes("-topmost", True)
+        overlay.attributes("-transparentcolor", TRANSPARENT_COLOR)
+        overlay.configure(bg=TRANSPARENT_COLOR)
+        overlay.withdraw()
+
+        canvas = tk.Canvas(
+            overlay,
+            bg=TRANSPARENT_COLOR,
+            highlightthickness=0,
+            borderwidth=0,
+            relief="flat",
+        )
+        canvas.pack(fill="both", expand=True)
+        self._highlight_overlay = overlay
+        self._highlight_canvas = canvas
+        overlay.update_idletasks()
+        _make_window_click_through(overlay)
+
     def _default_overlay_geometry(self) -> str:
         width = 340
         height = 150
@@ -301,6 +466,76 @@ class JkcheeseGui:
         self._overlay.geometry(f"+{x}+{y}")
         self._overlay_drag = (event.x_root, event.y_root)
 
+    def _draw_shop_highlights(self, alerts, source_size: tuple[int, int]) -> None:
+        if self._highlight_overlay is None or self._highlight_canvas is None:
+            return
+        if not self.overlay_enabled_var.get():
+            self._hide_shop_highlights()
+            return
+
+        highlights = build_shop_highlights(alerts, source_size)
+        if not highlights:
+            self._hide_shop_highlights()
+            return
+
+        rect = find_ldplayer_client_rect(self.instance_name_var.get())
+        if rect is None:
+            self._hide_shop_highlights()
+            self.auto_scan_status_var.set("自动识别：已更新，未定位到雷电窗口")
+            return
+
+        overlay = self._highlight_overlay
+        canvas = self._highlight_canvas
+        overlay.geometry(f"{rect.width}x{rect.height}+{rect.x}+{rect.y}")
+        canvas.configure(width=rect.width, height=rect.height)
+        canvas.delete("all")
+
+        for highlight in highlights:
+            left, top, right, bottom = map_capture_box_to_screen(highlight.box, source_size, rect)
+            color = HIGHLIGHT_COLORS.get(highlight.severity, "#ffd60a")
+            line_width = 6 if highlight.severity in {"critical", "high"} else 4
+            canvas.create_rectangle(
+                left + 4,
+                top + 4,
+                right - 4,
+                bottom - 4,
+                outline=color,
+                width=line_width,
+            )
+            label = f"买 {highlight.name}"
+            label_x = left + 10
+            label_y = max(8, top - 30)
+            text_id = canvas.create_text(
+                label_x,
+                label_y,
+                text=label,
+                anchor="nw",
+                fill="#ffffff",
+                font=("Microsoft YaHei UI", 16, "bold"),
+            )
+            box = canvas.bbox(text_id)
+            if box is not None:
+                bg_id = canvas.create_rectangle(
+                    box[0] - 8,
+                    box[1] - 4,
+                    box[2] + 8,
+                    box[3] + 4,
+                    fill=color,
+                    outline=color,
+                )
+                canvas.tag_raise(text_id, bg_id)
+
+        overlay.deiconify()
+        overlay.lift()
+        overlay.attributes("-topmost", True)
+        _make_window_click_through(overlay)
+
+    def _hide_shop_highlights(self) -> None:
+        if self._highlight_canvas is not None:
+            self._highlight_canvas.delete("all")
+        if self._highlight_overlay is not None:
+            self._highlight_overlay.withdraw()
+
     def _on_overlay_toggled(self) -> None:
         if self._overlay is None:
             return
@@ -309,6 +544,7 @@ class JkcheeseGui:
             self._overlay.attributes("-topmost", True)
         else:
             self._overlay.withdraw()
+            self._hide_shop_highlights()
         self._save_config()
 
     def _on_auto_settings_changed(self) -> None:
@@ -685,6 +921,7 @@ class JkcheeseGui:
         self.root.after(0, lambda: self.cleanup_status_var.set(message))
         self.root.after(0, lambda: self.auto_shop_var.set("商店：等待下一局"))
         self.root.after(0, lambda: self.overlay_text_var.set("Jkcheese 实战悬浮\n对局已结束，截图已自动清理。\n等待下一局商店识别。"))
+        self.root.after(0, self._hide_shop_highlights)
         return message
 
     def _handle_match_state(self, readings: list[OcrReading], capture_dir: Path) -> str:
@@ -996,6 +1233,7 @@ class JkcheeseGui:
         capture_dir = self._capture_dir()
         session_dir, screenshot_path = self._auto_scan_paths(capture_dir, auto=auto)
         saved = client.capture_screenshot(self._current_index(), screenshot_path, launch_if_needed=not auto)
+        source_size = _image_size(saved)
         shop_report = scan_shop_screenshot(
             saved,
             output_dir=session_dir / "shop",
@@ -1068,6 +1306,7 @@ class JkcheeseGui:
         self.root.after(0, lambda: self.last_tempo_var.set(tempo_summary))
         self.root.after(0, lambda: self.auto_shop_var.set(f"商店：{shop_summary}"))
         self.root.after(0, lambda: self.overlay_text_var.set(overlay_summary))
+        self.root.after(0, lambda: self._draw_shop_highlights(hit_alerts, source_size))
 
         self._queue_panel(
             "current",
@@ -1167,6 +1406,11 @@ class JkcheeseGui:
             if self._overlay is not None:
                 try:
                     self._overlay.destroy()
+                except tk.TclError:
+                    pass
+            if self._highlight_overlay is not None:
+                try:
+                    self._highlight_overlay.destroy()
                 except tk.TclError:
                     pass
             self.root.destroy()
