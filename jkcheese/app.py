@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .gui import JkcheeseGui
 from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
+from .ocr import OcrReading, read_screenshot
 from .region_capture import crop_regions
 
 
@@ -43,7 +44,21 @@ def build_parser() -> argparse.ArgumentParser:
     capture_regions.add_argument("--launch-if-needed", action="store_true")
     capture_regions.add_argument("--names", nargs="*", default=None)
 
+    read = subparsers.add_parser("read", help="Read gold, level, and HP from an existing screenshot")
+    read.add_argument("--input", type=Path, required=True)
+
+    capture_read = subparsers.add_parser("capture-read", help="Capture a screenshot and read gold, level, and HP")
+    capture_read.add_argument("--index", type=int, default=0)
+    capture_read.add_argument("--output", type=Path, default=Path("captures") / "reads")
+    capture_read.add_argument("--launch-if-needed", action="store_true")
+
     return parser
+
+
+def _print_readings(readings: list[OcrReading]) -> None:
+    for reading in readings:
+        value = reading.text if reading.text else "-"
+        print(f"{reading.name}: {value} (confidence {reading.confidence:.3f})")
 
 
 def run_cli(args: argparse.Namespace) -> int:
@@ -58,6 +73,11 @@ def run_cli(args: argparse.Namespace) -> int:
         print(f"Cropped {len(results)} regions to: {output.resolve()}")
         for result in results:
             print(f"{result.name}: {result.path}")
+        return 0
+
+    if args.command == "read":
+        readings = read_screenshot(args.input)
+        _print_readings(readings)
         return 0
 
     client = LDPlayerClient(args.root)
@@ -117,6 +137,16 @@ def run_cli(args: argparse.Namespace) -> int:
         print(f"Cropped {len(results)} regions to: {region_dir.resolve()}")
         for result in results:
             print(f"{result.name}: {result.path}")
+        return 0
+
+    if args.command == "capture-read":
+        base_output = args.output if args.output.is_absolute() else Path.cwd() / args.output
+        session_dir = base_output / time.strftime("%Y%m%d_%H%M%S")
+        screenshot_path = session_dir / "screen.png"
+        saved = client.capture_screenshot(args.index, screenshot_path, launch_if_needed=args.launch_if_needed)
+        readings = read_screenshot(saved)
+        print(f"Screenshot saved to: {saved}")
+        _print_readings(readings)
         return 0
 
     raise LDPlayerError(f"Unknown command: {args.command}")

@@ -37,3 +37,19 @@ def test_parser_reads_capture_regions_command():
     assert args.command == "capture-regions"
     assert args.index == 2
     assert args.names == ["shop"]
+
+
+def test_parser_reads_read_command():
+    parser = build_parser()
+    args = parser.parse_args(["read", "--input", "screen.png"])
+
+    assert args.command == "read"
+    assert str(args.input) == "screen.png"
+
+
+def test_parser_reads_capture_read_command():
+    parser = build_parser()
+    args = parser.parse_args(["capture-read", "--index", "3"])
+
+    assert args.command == "capture-read"
+    assert args.index == 3
