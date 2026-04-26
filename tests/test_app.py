@@ -90,6 +90,31 @@ def test_parser_reads_recommend_lineup_command():
     assert args.limit == 2
 
 
+def test_parser_reads_item_advice_command():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "item-advice",
+            "--shop",
+            "薇古丝",
+            "盖伦",
+            "--seen",
+            "新星",
+            "--items",
+            "眼泪",
+            "拳套",
+            "--limit",
+            "2",
+        ]
+    )
+
+    assert args.command == "item-advice"
+    assert args.shop == ["薇古丝", "盖伦"]
+    assert args.seen == ["新星"]
+    assert args.items == ["眼泪", "拳套"]
+    assert args.limit == 2
+
+
 def test_parser_reads_core_advice_command():
     parser = build_parser()
     args = parser.parse_args(

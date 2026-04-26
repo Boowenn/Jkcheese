@@ -27,6 +27,7 @@ from .chase_calculator import (
     visible_counts_from_shop,
 )
 from .gui import JkcheeseGui
+from .item_advice import build_item_advice, format_item_advice
 from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
 from .lineups import (
     DEFAULT_LINEUP_URL,
@@ -124,6 +125,13 @@ def build_parser() -> argparse.ArgumentParser:
     recommend_lineup.add_argument("--source", default=DEFAULT_LINEUP_URL)
     recommend_lineup.add_argument("--seen", nargs="*", default=[])
     recommend_lineup.add_argument("--limit", type=int, default=5)
+
+    item_advice = subparsers.add_parser(
+        "item-advice",
+        help="Recommend main carry, main tank, and items from S-tier lineups",
+    )
+    item_advice.add_argument("--shop", nargs="*", default=[], help="Recognized current shop cards")
+    _add_core_advice_args(item_advice)
 
     core_advice = subparsers.add_parser(
         "core-advice",
@@ -243,6 +251,7 @@ def _add_core_advice_args(parser: argparse.ArgumentParser) -> None:
         default=",".join(f"{cost}:{size}" for cost, size in DEFAULT_POOL_SIZES.items()),
         help="Per-cost public pool sizes, for example 1:30,2:25,3:18,4:10,5:9",
     )
+    parser.add_argument("--items", nargs="*", default=[], help="Item components, for example 大剑 眼泪 拳套")
     parser.add_argument("--limit", type=int, default=5)
 
 
@@ -364,6 +373,32 @@ def run_cli(args: argparse.Namespace) -> int:
         _print_lineup_recommendations(recommendations)
         return 0
 
+    if args.command == "item-advice":
+        lineups = fetch_jcc_s_lineups(args.source)
+        state_path = args.state if args.state.is_absolute() else Path.cwd() / args.state
+        seen_tokens = (*tuple(args.shop), *tuple(args.seen))
+        core_report = build_core_advice(
+            state_path=state_path,
+            lineups=lineups,
+            seen=seen_tokens,
+            owned=tuple(args.owned),
+            mode=args.mode,
+            reset=args.reset,
+            limit=args.limit,
+            focus_costs=tuple(args.focus_costs),
+            pool_sizes=_parse_pool_sizes(args.pool_sizes),
+        )
+        item_report = build_item_advice(
+            core_report.recommendations,
+            state=core_report.state,
+            shop_names=tuple(args.shop),
+            seen_tokens=core_report.seen_tokens,
+            item_components=tuple(args.items),
+            limit=min(3, args.limit),
+        )
+        print(format_item_advice(item_report))
+        return 0
+
     if args.command == "core-advice":
         lineups = fetch_jcc_s_lineups(args.source)
         state_path = args.state if args.state.is_absolute() else Path.cwd() / args.state
@@ -379,6 +414,18 @@ def run_cli(args: argparse.Namespace) -> int:
             pool_sizes=_parse_pool_sizes(args.pool_sizes),
         )
         _print_core_advice(report)
+        print("")
+        print(
+            format_item_advice(
+                build_item_advice(
+                    report.recommendations,
+                    state=report.state,
+                    seen_tokens=report.seen_tokens,
+                    item_components=tuple(args.items),
+                    limit=min(3, args.limit),
+                )
+            )
+        )
         return 0
 
     if args.command == "reset-cards":
@@ -558,6 +605,18 @@ def run_cli(args: argparse.Namespace) -> int:
         )
         print(f"Screenshot saved to: {saved}")
         _print_core_advice(report)
+        print("")
+        print(
+            format_item_advice(
+                build_item_advice(
+                    report.recommendations,
+                    state=report.state,
+                    seen_tokens=report.seen_tokens,
+                    item_components=tuple(args.items),
+                    limit=min(3, args.limit),
+                )
+            )
+        )
         return 0
 
     if args.command == "capture-scout":
@@ -643,6 +702,16 @@ def run_cli(args: argparse.Namespace) -> int:
         )
         print("")
         print(format_shop_hit_alerts(hit_alerts))
+        item_report = build_item_advice(
+            core_report.recommendations,
+            state=core_report.state,
+            shop_names=scan_report.recognized_names,
+            seen_tokens=core_report.seen_tokens,
+            item_components=tuple(args.items),
+            limit=min(3, args.limit),
+        )
+        print("")
+        print(format_item_advice(item_report))
         if detected_level is not None and detected_gold is not None:
             chase_reports = build_chase_reports_from_state(
                 core_report.state,

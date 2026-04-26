@@ -11,6 +11,7 @@ from .advice import build_advice
 from .card_tracker import build_core_advice, format_core_advice, load_card_state, reset_card_state
 from .chase_calculator import build_chase_reports_from_state, format_chase_reports, visible_counts_from_shop
 from .config import AppConfig
+from .item_advice import build_item_advice, format_item_advice
 from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
 from .lineups import fetch_jcc_s_lineups, recommend_lineups
 from .ocr import read_screenshot
@@ -33,7 +34,7 @@ class JkcheeseGui:
         self.config = AppConfig.load()
         self.root = tk.Tk()
         self.root.title(f"Jkcheese v{__version__}")
-        self.root.geometry("1040x760")
+        self.root.geometry("1040x800")
         self.root.minsize(980, 700)
 
         self.ldplayer_root_var = tk.StringVar(value=self.config.ldplayer_root)
@@ -50,8 +51,10 @@ class JkcheeseGui:
         self.last_advice_var = tk.StringVar(value="-")
         self.last_lineups_var = tk.StringVar(value="-")
         self.last_core_var = tk.StringVar(value="-")
+        self.last_item_var = tk.StringVar(value="-")
         self.live_tokens_var = tk.StringVar(value="")
         self.owned_cards_var = tk.StringVar(value="")
+        self.item_components_var = tk.StringVar(value="")
         self._busy = False
 
         self._build_ui()
@@ -93,6 +96,7 @@ class JkcheeseGui:
         self._add_status_row(status, 8, "Last Advice", self.last_advice_var)
         self._add_status_row(status, 9, "S Lineups", self.last_lineups_var)
         self._add_status_row(status, 10, "Core Advice", self.last_core_var)
+        self._add_status_row(status, 11, "Item Advice", self.last_item_var)
 
         actions = ttk.LabelFrame(self.root, text="Actions", padding=16)
         actions.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 12))
@@ -128,23 +132,28 @@ class JkcheeseGui:
         ttk.Entry(core, textvariable=self.live_tokens_var).grid(row=0, column=1, sticky="ew", pady=3)
         ttk.Label(core, text="Owned Copies").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=3)
         ttk.Entry(core, textvariable=self.owned_cards_var).grid(row=1, column=1, sticky="ew", pady=3)
+        ttk.Label(core, text="Item Components").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=3)
+        ttk.Entry(core, textvariable=self.item_components_var).grid(row=2, column=1, sticky="ew", pady=3)
 
         self.core_button = ttk.Button(core, text="Core Advice", command=self.get_core_advice)
         self.shop_scan_button = ttk.Button(core, text="Scan Shop", command=self.scan_shop)
         self.scout_button = ttk.Button(core, text="Scout Opponent", command=self.scout_opponent)
+        self.item_button = ttk.Button(core, text="Item Advice", command=self.get_item_advice)
         self.reset_cards_button = ttk.Button(core, text="Reset Card Counts", command=self.reset_card_counts)
         self.core_button.grid(row=0, column=2, padx=(8, 0), pady=3, sticky="ew")
         self.shop_scan_button.grid(row=1, column=2, padx=(8, 0), pady=3, sticky="ew")
         self.scout_button.grid(row=0, column=3, padx=(8, 0), pady=3, sticky="ew")
         self.reset_cards_button.grid(row=1, column=3, padx=(8, 0), pady=3, sticky="ew")
+        self.item_button.grid(row=2, column=2, columnspan=2, padx=(8, 0), pady=3, sticky="ew")
 
         hint = (
             "Live tokens rank S lineups. Owned copies drive cost-aware star warnings, "
             "e.g. 4费Vexx7, 五费Nami=3, or Vex@4x7. Focus is 4/5-cost units."
+            " Item Components can be 大剑 眼泪 拳套."
             " Scout Opponent only captures the opponent board you manually opened."
             " Default pools: 1=30, 2=25, 3=18, 4=10, 5=9."
         )
-        ttk.Label(core, text=hint).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ttk.Label(core, text=hint).grid(row=3, column=0, columnspan=4, sticky="w", pady=(6, 0))
 
         log_frame = ttk.LabelFrame(self.root, text="Log", padding=12)
         log_frame.grid(row=4, column=0, sticky="nsew", padx=16, pady=(0, 16))
@@ -202,6 +211,7 @@ class JkcheeseGui:
             self.core_button,
             self.shop_scan_button,
             self.scout_button,
+            self.item_button,
             self.reset_cards_button,
             self.open_folder_button,
         ):
@@ -413,9 +423,47 @@ class JkcheeseGui:
             if lineup_summary:
                 self.root.after(0, lambda: self.last_lineups_var.set(lineup_summary))
             self.root.after(0, lambda: self.owned_cards_var.set(""))
-            return format_core_advice(report)
+            item_report = build_item_advice(
+                report.recommendations,
+                state=report.state,
+                seen_tokens=report.seen_tokens,
+                item_components=self.item_components_var.get(),
+                limit=3,
+            )
+            item_summary = "; ".join(f"{plan.lineup_name}: {plan.main_carry}" for plan in item_report.plans[:2]) or "-"
+            self.root.after(0, lambda: self.last_item_var.set(item_summary))
+            return format_core_advice(report) + "\n\n" + format_item_advice(item_report)
 
         self._run_task("Building core advice", task)
+
+    def get_item_advice(self) -> None:
+        def task() -> str:
+            capture_dir = self._capture_dir()
+            lineups = fetch_jcc_s_lineups()
+            core_report = build_core_advice(
+                state_path=capture_dir / "card_state.json",
+                lineups=lineups,
+                seen=self.live_tokens_var.get(),
+                owned=self.owned_cards_var.get(),
+                mode="add",
+                limit=5,
+            )
+            item_report = build_item_advice(
+                core_report.recommendations,
+                state=core_report.state,
+                seen_tokens=core_report.seen_tokens,
+                item_components=self.item_components_var.get(),
+                limit=3,
+            )
+            lineup_summary = "; ".join(item.lineup.name for item in core_report.recommendations[:3])
+            item_summary = "; ".join(f"{plan.lineup_name}: {plan.main_carry}" for plan in item_report.plans[:2]) or "-"
+            if lineup_summary:
+                self.root.after(0, lambda: self.last_lineups_var.set(lineup_summary))
+            self.root.after(0, lambda: self.last_item_var.set(item_summary))
+            self.root.after(0, lambda: self.owned_cards_var.set(""))
+            return format_item_advice(item_report)
+
+        self._run_task("Building item advice", task)
 
     def scan_shop(self) -> None:
         def task() -> str:
@@ -444,9 +492,18 @@ class JkcheeseGui:
                 limit=5,
             )
             hit_alerts = build_shop_hit_alerts(report, core_report.state, lineups=lineups)
+            item_report = build_item_advice(
+                core_report.recommendations,
+                state=core_report.state,
+                shop_names=report.recognized_names,
+                seen_tokens=core_report.seen_tokens,
+                item_components=self.item_components_var.get(),
+                limit=3,
+            )
             lineup_summary = "; ".join(item.lineup.name for item in core_report.recommendations[:3])
             shop_summary = ", ".join(report.recognized_names) if report.recognized_names else "No named shop cards"
             hit_summary = "; ".join(f"槽位{alert.slot} {alert.name}" for alert in hit_alerts[:3])
+            item_summary = "; ".join(f"{plan.lineup_name}: {plan.main_carry}" for plan in item_report.plans[:2]) or "-"
             chase_output = "四费/五费追三概率:\n- 未能稳定读取等级或金币；可用 CLI 的 chase 命令手动计算。"
             if detected_level is not None and detected_gold is not None:
                 chase_output = format_chase_reports(
@@ -460,10 +517,13 @@ class JkcheeseGui:
             self.root.after(0, lambda: self.last_capture_var.set(str(saved)))
             self.root.after(0, lambda: self.last_lineups_var.set(lineup_summary or "-"))
             self.root.after(0, lambda: self.last_core_var.set(hit_summary or shop_summary))
+            self.root.after(0, lambda: self.last_item_var.set(item_summary))
             return (
                 format_shop_scan(report)
                 + "\n\n"
                 + format_shop_hit_alerts(hit_alerts)
+                + "\n\n"
+                + format_item_advice(item_report)
                 + "\n\n"
                 + chase_output
                 + "\n\n"

@@ -22,6 +22,7 @@ Current module scope:
 - warn immediately when a shop card is a tracked two-star/three-star hit or S-lineup key card
 - estimate 4-cost and 5-cost three-star chase odds from pool, owned copies, contested copies, level, and gold
 - scout a manually opened opponent board from screenshots and count trained contested 4/5-cost targets
+- suggest main carry, main tank, and item direction from real-time S-tier lineups, shop hits, tracked cards, and optional item components
 - provide a simple Windows GUI
 - build a one-file EXE with PyInstaller
 - run unit tests
@@ -185,6 +186,20 @@ python main.py capture-scout --index 0 --target 千珏 --level 8 --gold 30
 
 `capture-scout` only captures the current screen. It does not switch opponents, click the game, or read game memory. The output includes a `Contested 参数` line such as `千珏=2`, which can be used directly in the chase calculator.
 
+Get main carry, main tank, and item direction from current S-tier lineups:
+
+```powershell
+python main.py item-advice --seen 新星 薇古丝 --shop 薇古丝 盖伦 --items 眼泪 眼泪 大棒 拳套
+```
+
+`item-advice` combines real-time S lineup ranking, current shop names, tracked owned copies, and optional item components. If no components are provided, it still shows recommended main C items, main tank items, and functional items. If components are provided, it marks which priority items can be made now and which component is missing.
+
+`capture-shop-scan` also prints this item advice after scanning the shop:
+
+```powershell
+python main.py capture-shop-scan --index 0 --items 大剑 眼泪 拳套
+```
+
 Build the EXE:
 
 ```powershell
@@ -212,7 +227,7 @@ py -3.14 -m pytest -q
 
 ## Current module
 
-`v0.10.0` includes the first nine modules:
+`v0.11.0` includes the first ten modules:
 
 - LDPlayer connection
 - game launch
@@ -237,12 +252,13 @@ py -3.14 -m pytest -q
 - automatic chase estimates in `capture-shop-scan` and the GUI Scan Shop flow when level and gold OCR are readable
 - module 9 opponent/card monitoring with `scout-label`, `scout-scan`, and `capture-scout`
 - GUI Scout Opponent button for the board you manually opened
+- module 10 equipment and main-carry reminders with `item-advice`
+- GUI Item Advice entry/button and Scan Shop integration for S-lineup carry/tank/item direction
 
 ## Next module
 
-The next planned module is item/main-carry guidance and richer game-state awareness:
+The next planned module is stage/economy rhythm and richer game-state awareness:
 
-- add main carry/tank and item reminders from the current S-lineup source
 - add stage and economy rhythm suggestions
 - simplify the Chinese EXE layout into a left screenshot status / right recommendation dashboard
 - keep all behavior read-only
