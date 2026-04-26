@@ -27,6 +27,15 @@ from .lineups import (
 )
 from .ocr import OcrReading, export_ocr_debug, read_screenshot
 from .region_capture import crop_regions
+from .shop_recognition import (
+    DEFAULT_SHOP_TEMPLATE_PATH,
+    DEFAULT_TEMPLATE_THRESHOLD,
+    ShopRecognitionError,
+    format_shop_scan,
+    label_shop_templates,
+    parse_shop_labels,
+    scan_shop,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -108,6 +117,30 @@ def build_parser() -> argparse.ArgumentParser:
 
     reset_cards = subparsers.add_parser("reset-cards", help="Clear the local card count tracker")
     reset_cards.add_argument("--state", type=Path, default=DEFAULT_CARD_STATE_PATH)
+
+    shop_scan = subparsers.add_parser("shop-scan", help="Scan shop slots from an existing screenshot")
+    shop_scan.add_argument("--input", type=Path, required=True)
+    shop_scan.add_argument("--output", type=Path, default=Path("captures") / "shop_scan")
+    shop_scan.add_argument("--templates", type=Path, default=DEFAULT_SHOP_TEMPLATE_PATH)
+    shop_scan.add_argument("--threshold", type=float, default=DEFAULT_TEMPLATE_THRESHOLD)
+    shop_scan.add_argument("--no-debug", action="store_true")
+
+    capture_shop_scan = subparsers.add_parser(
+        "capture-shop-scan",
+        help="Capture a screenshot, scan shop slots, and feed recognized names into core advice",
+    )
+    capture_shop_scan.add_argument("--index", type=int, default=0)
+    capture_shop_scan.add_argument("--output", type=Path, default=Path("captures") / "shop_scan")
+    capture_shop_scan.add_argument("--templates", type=Path, default=DEFAULT_SHOP_TEMPLATE_PATH)
+    capture_shop_scan.add_argument("--threshold", type=float, default=DEFAULT_TEMPLATE_THRESHOLD)
+    capture_shop_scan.add_argument("--launch-if-needed", action="store_true")
+    _add_core_advice_args(capture_shop_scan)
+
+    shop_label = subparsers.add_parser("shop-label", help="Label shop slots to teach local card templates")
+    shop_label.add_argument("--input", type=Path, required=True)
+    shop_label.add_argument("--label", nargs="+", required=True, help="Examples: 2=丽桑卓:1 5=雷克塞:1")
+    shop_label.add_argument("--templates", type=Path, default=DEFAULT_SHOP_TEMPLATE_PATH)
+    shop_label.add_argument("--output", type=Path, default=Path("captures") / "shop_templates")
 
     return parser
 
@@ -262,6 +295,27 @@ def run_cli(args: argparse.Namespace) -> int:
         print(f"Card tracker reset: {state_path.resolve()}")
         return 0
 
+    if args.command == "shop-scan":
+        output = None if args.no_debug else (args.output if args.output.is_absolute() else Path.cwd() / args.output)
+        report = scan_shop(
+            args.input,
+            output_dir=output,
+            templates_path=args.templates,
+            threshold=args.threshold,
+        )
+        print(format_shop_scan(report))
+        return 0
+
+    if args.command == "shop-label":
+        templates = label_shop_templates(
+            args.input,
+            parse_shop_labels(args.label),
+            templates_path=args.templates,
+            output_dir=args.output if args.output.is_absolute() else Path.cwd() / args.output,
+        )
+        print(f"Saved {len(templates)} shop templates to: {(args.templates if args.templates.is_absolute() else Path.cwd() / args.templates).resolve()}")
+        return 0
+
     client = LDPlayerClient(args.root)
 
     if args.command == "inspect":
@@ -365,6 +419,38 @@ def run_cli(args: argparse.Namespace) -> int:
         _print_core_advice(report)
         return 0
 
+    if args.command == "capture-shop-scan":
+        base_output = args.output if args.output.is_absolute() else Path.cwd() / args.output
+        session_dir = base_output / time.strftime("%Y%m%d_%H%M%S")
+        screenshot_path = session_dir / "screen.png"
+        saved = client.capture_screenshot(args.index, screenshot_path, launch_if_needed=args.launch_if_needed)
+        scan_report = scan_shop(
+            saved,
+            output_dir=session_dir / "shop",
+            templates_path=args.templates,
+            threshold=args.threshold,
+        )
+        print(f"Screenshot saved to: {saved}")
+        print(format_shop_scan(scan_report))
+
+        lineups = fetch_jcc_s_lineups(args.source)
+        state_path = args.state if args.state.is_absolute() else Path.cwd() / args.state
+        seen_tokens = (*scan_report.recognized_names, *tuple(args.seen))
+        core_report = build_core_advice(
+            state_path=state_path,
+            lineups=lineups,
+            seen=seen_tokens,
+            owned=tuple(args.owned),
+            mode=args.mode,
+            reset=args.reset,
+            limit=args.limit,
+            focus_costs=tuple(args.focus_costs),
+            pool_sizes=_parse_pool_sizes(args.pool_sizes),
+        )
+        print("")
+        _print_core_advice(core_report)
+        return 0
+
     raise LDPlayerError(f"Unknown command: {args.command}")
 
 
@@ -380,6 +466,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {exc}")
         return 1
     except CardTrackerError as exc:
+        print(f"Error: {exc}")
+        return 1
+    except ShopRecognitionError as exc:
         print(f"Error: {exc}")
         return 1
     except KeyboardInterrupt:

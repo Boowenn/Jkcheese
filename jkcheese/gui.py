@@ -14,6 +14,7 @@ from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
 from .lineups import fetch_jcc_s_lineups, recommend_lineups
 from .ocr import read_screenshot
 from .region_capture import crop_regions
+from .shop_recognition import format_shop_scan, scan_shop as scan_shop_screenshot
 from .version import __version__
 
 
@@ -119,9 +120,11 @@ class JkcheeseGui:
         ttk.Entry(core, textvariable=self.owned_cards_var).grid(row=1, column=1, sticky="ew", pady=3)
 
         self.core_button = ttk.Button(core, text="Core Advice", command=self.get_core_advice)
+        self.shop_scan_button = ttk.Button(core, text="Scan Shop", command=self.scan_shop)
         self.reset_cards_button = ttk.Button(core, text="Reset Card Counts", command=self.reset_card_counts)
         self.core_button.grid(row=0, column=2, padx=(8, 0), pady=3, sticky="ew")
-        self.reset_cards_button.grid(row=1, column=2, padx=(8, 0), pady=3, sticky="ew")
+        self.shop_scan_button.grid(row=1, column=2, padx=(8, 0), pady=3, sticky="ew")
+        self.reset_cards_button.grid(row=0, column=3, rowspan=2, padx=(8, 0), pady=3, sticky="nsew")
 
         hint = (
             "Live tokens rank S lineups. Owned copies drive cost-aware star warnings, "
@@ -184,6 +187,7 @@ class JkcheeseGui:
             self.advice_button,
             self.lineups_button,
             self.core_button,
+            self.shop_scan_button,
             self.reset_cards_button,
             self.open_folder_button,
         ):
@@ -398,6 +402,37 @@ class JkcheeseGui:
             return format_core_advice(report)
 
         self._run_task("Building core advice", task)
+
+    def scan_shop(self) -> None:
+        def task() -> str:
+            client = self._client()
+            index = self._current_index()
+            capture_dir = self._capture_dir()
+            session_dir = capture_dir / time.strftime("shop_%Y%m%d_%H%M%S")
+            screenshot_path = session_dir / "screen.png"
+            saved = client.capture_screenshot(index, screenshot_path, launch_if_needed=True)
+            report = scan_shop_screenshot(
+                saved,
+                output_dir=session_dir / "shop",
+                templates_path=capture_dir / "shop_templates.json",
+            )
+            lineups = fetch_jcc_s_lineups()
+            core_report = build_core_advice(
+                state_path=capture_dir / "card_state.json",
+                lineups=lineups,
+                seen=(*report.recognized_names, self.live_tokens_var.get()),
+                owned=self.owned_cards_var.get(),
+                mode="add",
+                limit=5,
+            )
+            lineup_summary = "; ".join(item.lineup.name for item in core_report.recommendations[:3])
+            shop_summary = ", ".join(report.recognized_names) if report.recognized_names else "No named shop cards"
+            self.root.after(0, lambda: self.last_capture_var.set(str(saved)))
+            self.root.after(0, lambda: self.last_lineups_var.set(lineup_summary or "-"))
+            self.root.after(0, lambda: self.last_core_var.set(shop_summary))
+            return format_shop_scan(report) + "\n\n" + format_core_advice(core_report)
+
+        self._run_task("Scanning shop", task)
 
     def reset_card_counts(self) -> None:
         def task() -> str:

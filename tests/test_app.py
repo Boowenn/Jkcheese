@@ -136,3 +136,30 @@ def test_parser_reads_reset_cards_command():
 
     assert args.command == "reset-cards"
     assert str(args.state) == "cards.json"
+
+
+def test_parser_reads_shop_scan_command():
+    parser = build_parser()
+    args = parser.parse_args(["shop-scan", "--input", "screen.png", "--templates", "templates.json"])
+
+    assert args.command == "shop-scan"
+    assert str(args.input) == "screen.png"
+    assert str(args.templates) == "templates.json"
+
+
+def test_parser_reads_capture_shop_scan_command():
+    parser = build_parser()
+    args = parser.parse_args(["capture-shop-scan", "--index", "1", "--seen", "机甲"])
+
+    assert args.command == "capture-shop-scan"
+    assert args.index == 1
+    assert args.seen == ["机甲"]
+
+
+def test_parser_reads_shop_label_command():
+    parser = build_parser()
+    args = parser.parse_args(["shop-label", "--input", "screen.png", "--label", "2=丽桑卓:1"])
+
+    assert args.command == "shop-label"
+    assert str(args.input) == "screen.png"
+    assert args.label == ["2=丽桑卓:1"]

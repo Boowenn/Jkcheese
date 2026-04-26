@@ -17,6 +17,7 @@ Current module scope:
 - recommend S-tier lineups from live card/name tokens
 - track owned card copies and warn for cost-aware 4/5-cost star progress
 - combine live tokens, owned cards, and current S-tier lineups into one core advice view
+- scan shop slots, export shop debug crops, and recognize locally labeled shop templates
 - provide a simple Windows GUI
 - build a one-file EXE with PyInstaller
 - run unit tests
@@ -122,6 +123,27 @@ Clear the local card count tracker between games:
 python main.py reset-cards
 ```
 
+Scan shop slots from an existing screenshot:
+
+```powershell
+python main.py shop-scan --input captures\live_game.png
+```
+
+Teach local templates from a screenshot, then scan again:
+
+```powershell
+python main.py shop-label --input captures\live_game.png --label 2=丽桑卓:1 5=雷克塞:1
+python main.py shop-scan --input captures\live_game.png
+```
+
+The first scan can show `occupied unknown` for cards that have not been labeled yet. This is expected: module 7 learns local visual templates from your own screenshots so it can recognize the same card art later without external OCR services.
+
+Capture the current emulator screen, scan the shop, and feed recognized shop names into S-tier lineup advice:
+
+```powershell
+python main.py capture-shop-scan --index 0 --launch-if-needed
+```
+
 Build the EXE:
 
 ```powershell
@@ -149,7 +171,7 @@ py -3.14 -m pytest -q
 
 ## Current module
 
-`v0.6.0` includes the first six modules:
+`v0.7.0` includes the first seven modules:
 
 - LDPlayer connection
 - game launch
@@ -164,12 +186,16 @@ py -3.14 -m pytest -q
 - cost-aware pair, two-star, four/five-copy, seven/eight-copy, and three-star warnings
 - default 4/5-cost focus so low-cost shop noise does not drown out real win-condition alerts
 - a GUI core helper panel for live tokens, owned copies, S-line recommendations, and upgrade warnings
+- shop slot occupancy detection
+- shop cost digit reading
+- local card-template labeling and recognition with `shop-label`, `shop-scan`, and `capture-shop-scan`
+- GUI Scan Shop button that feeds recognized shop names into the S-line recommendation flow
 
 ## Next module
 
-The next planned module is automatic shop text recognition:
+The next planned module is stronger live recognition and game-state awareness:
 
-- shop card recognition experiments
-- feed recognized shop cards into the core advice tracker
-- calibrate card-name OCR/debug crops from live screenshots
+- improve direct card-name OCR beyond local templates
+- add shop-hit alerts when a visible shop card completes a tracked two-star or three-star
+- add opponent/contested-card screenshot checks
 - keep all behavior read-only
