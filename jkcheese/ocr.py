@@ -21,6 +21,7 @@ class OcrField:
     min_x: int = 0
     max_right: int | None = None
     max_score: float = 0.48
+    mode: str = "number"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,16 @@ class DebugExport:
 
 
 FIELDS: tuple[OcrField, ...] = (
+    OcrField(
+        name="stage",
+        region_name="stage",
+        roi=(0, 4, 170, 64),
+        min_area=18,
+        min_width=3,
+        min_height=8,
+        max_score=0.55,
+        mode="stage",
+    ),
     OcrField(
         name="gold",
         region_name="gold",
@@ -141,6 +152,9 @@ def read_field_crop(image: Image.Image, field: OcrField) -> OcrReading:
     mask = _foreground_mask(roi)
     components = _filter_components(_components(mask), field)
 
+    if field.mode == "stage":
+        return _read_stage_components(components, field)
+
     digits: list[str] = []
     scores: list[float] = []
     for component in components:
@@ -151,6 +165,36 @@ def read_field_crop(image: Image.Image, field: OcrField) -> OcrReading:
 
     text = "".join(digits)
     value = int(text) if text else None
+    confidence = 0.0 if not scores else max(0.0, min(1.0, 1.0 - (sum(scores) / len(scores))))
+
+    return OcrReading(
+        name=field.name,
+        text=text,
+        value=value,
+        confidence=round(confidence, 3),
+        source_region=field.region_name,
+    )
+
+
+def _read_stage_components(components: list[Component], field: OcrField) -> OcrReading:
+    digits: list[str] = []
+    scores: list[float] = []
+    for component in components:
+        digit, score = _recognize_digit(component.image)
+        if score <= field.max_score:
+            digits.append(digit)
+            scores.append(score)
+
+    raw_text = "".join(digits)
+    if len(raw_text) >= 2:
+        text = f"{raw_text[0]}-{raw_text[1]}"
+        value = int(raw_text[:2])
+    elif raw_text:
+        text = raw_text
+        value = int(raw_text)
+    else:
+        text = ""
+        value = None
     confidence = 0.0 if not scores else max(0.0, min(1.0, 1.0 - (sum(scores) / len(scores))))
 
     return OcrReading(

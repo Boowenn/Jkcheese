@@ -73,6 +73,27 @@ def test_parser_reads_capture_advise_command():
     assert str(args.debug_output) == "debug"
 
 
+def test_parser_reads_tempo_command():
+    parser = build_parser()
+    args = parser.parse_args(["tempo", "--stage", "4-2", "--level", "8", "--gold", "34", "--hp", "45"])
+
+    assert args.command == "tempo"
+    assert args.stage == "4-2"
+    assert args.level == 8
+    assert args.gold == 34
+    assert args.hp == 45
+
+
+def test_parser_reads_capture_tempo_command():
+    parser = build_parser()
+    args = parser.parse_args(["capture-tempo", "--index", "2", "--stage", "3-2", "--gold", "30"])
+
+    assert args.command == "capture-tempo"
+    assert args.index == 2
+    assert args.stage == "3-2"
+    assert args.gold == 30
+
+
 def test_parser_reads_lineups_command():
     parser = build_parser()
     args = parser.parse_args(["lineups", "--limit", "3"])

@@ -10,8 +10,8 @@ Current module scope:
 - launch the game
 - capture emulator screenshots
 - crop known in-game regions from screenshots
-- read gold, level, and HP from screenshots
-- print confidence warnings and basic economy advice
+- read stage, gold, level, and HP from screenshots
+- print confidence warnings and stage-aware economy rhythm advice
 - export OCR debug crops for calibration
 - fetch S-tier Golden Spatula lineups from the public `实时铲榜` Tencent Docs sheet
 - recommend S-tier lineups from live card/name tokens
@@ -23,6 +23,7 @@ Current module scope:
 - estimate 4-cost and 5-cost three-star chase odds from pool, owned copies, contested copies, level, and gold
 - scout a manually opened opponent board from screenshots and count trained contested 4/5-cost targets
 - suggest main carry, main tank, and item direction from real-time S-tier lineups, shop hits, tracked cards, and optional item components
+- suggest when to level, save, small-D, or all-in from stage, level, gold, and HP
 - provide a simple Windows GUI
 - build a one-file EXE with PyInstaller
 - run unit tests
@@ -66,13 +67,13 @@ Capture and crop regions in one step:
 python main.py capture-regions --index 0 --output captures\regions --launch-if-needed
 ```
 
-Read gold, level, and HP from an existing screenshot:
+Read stage, gold, level, and HP from an existing screenshot:
 
 ```powershell
 python main.py read --input captures\live_game.png
 ```
 
-Capture and read gold, level, and HP in one step:
+Capture and read stage, gold, level, and HP in one step:
 
 ```powershell
 python main.py capture-read --index 0 --output captures\reads --launch-if-needed
@@ -89,6 +90,20 @@ Capture and get advice in one step:
 ```powershell
 python main.py capture-advise --index 0 --output captures\advice --launch-if-needed
 ```
+
+Get stage-aware economy rhythm advice from manual values:
+
+```powershell
+python main.py tempo --stage 4-2 --level 8 --gold 34 --hp 45
+```
+
+Capture the current screen and get rhythm advice from OCR. If stage, gold, level, or HP OCR is unstable, pass manual overrides:
+
+```powershell
+python main.py capture-tempo --index 0 --stage 3-2 --gold 30
+```
+
+The rhythm engine is conservative and read-only. It suggests whether this is a better window to `升人口`, `存钱`, `小 D`, or `all in`, but it never clicks, buys, rolls, or changes the game.
 
 Fetch current S-tier Golden Spatula lineups from `实时铲榜`:
 
@@ -227,7 +242,7 @@ py -3.14 -m pytest -q
 
 ## Current module
 
-`v0.11.0` includes the first ten modules:
+`v0.12.0` includes the first eleven modules:
 
 - LDPlayer connection
 - game launch
@@ -235,7 +250,7 @@ py -3.14 -m pytest -q
 - simple end-user GUI
 - 1920x1080 in-game region presets
 - region crop export for gold, level, HP, traits, shop, bench, and opponents
-- lightweight local digit OCR for gold, level, and HP
+- lightweight local digit OCR for stage, gold, level, and HP
 - confidence warnings, debug exports, and basic economy advice
 - read-only `实时铲榜` S-tier lineup fetching and token-based S lineup recommendation
 - card count tracking for owned copies
@@ -254,11 +269,12 @@ py -3.14 -m pytest -q
 - GUI Scout Opponent button for the board you manually opened
 - module 10 equipment and main-carry reminders with `item-advice`
 - GUI Item Advice entry/button and Scan Shop integration for S-lineup carry/tank/item direction
+- module 11 stage/economy rhythm advice with `tempo` and `capture-tempo`
+- GUI Tempo Advice button and Scan Shop rhythm integration for level/save/small-D/all-in suggestions
 
 ## Next module
 
-The next planned module is stage/economy rhythm and richer game-state awareness:
+The next planned module is a simpler end-user dashboard:
 
-- add stage and economy rhythm suggestions
 - simplify the Chinese EXE layout into a left screenshot status / right recommendation dashboard
 - keep all behavior read-only

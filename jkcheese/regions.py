@@ -53,7 +53,7 @@ GAME_1920X1080 = RegionPreset(
     width=1920,
     height=1080,
     regions=(
-        Region("stage", 704, 0, 520, 72),
+        Region("stage", 590, 0, 210, 72),
         Region("level", 262, 799, 185, 58),
         Region("gold", 900, 806, 210, 58),
         Region("player_hp", 1695, 104, 210, 92),

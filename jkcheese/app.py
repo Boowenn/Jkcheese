@@ -26,6 +26,7 @@ from .chase_calculator import (
     parse_contested_counts,
     visible_counts_from_shop,
 )
+from .economy import build_economy_rhythm, format_economy_rhythm
 from .gui import JkcheeseGui
 from .item_advice import build_item_advice, format_item_advice
 from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
@@ -116,6 +117,19 @@ def build_parser() -> argparse.ArgumentParser:
     capture_advise.add_argument("--output", type=Path, default=Path("captures") / "advice")
     capture_advise.add_argument("--launch-if-needed", action="store_true")
     capture_advise.add_argument("--debug-output", type=Path, default=None)
+
+    tempo = subparsers.add_parser("tempo", help="Print stage-aware economy rhythm advice")
+    _add_tempo_args(tempo)
+
+    capture_tempo = subparsers.add_parser(
+        "capture-tempo",
+        help="Capture a screenshot, read stage/gold/level/HP, and print economy rhythm advice",
+    )
+    capture_tempo.add_argument("--index", type=int, default=0)
+    capture_tempo.add_argument("--output", type=Path, default=Path("captures") / "tempo")
+    capture_tempo.add_argument("--launch-if-needed", action="store_true")
+    capture_tempo.add_argument("--debug-output", type=Path, default=None)
+    _add_tempo_args(capture_tempo)
 
     lineups = subparsers.add_parser("lineups", help="Fetch S-tier Golden Spatula lineups from 实时铲榜")
     lineups.add_argument("--source", default=DEFAULT_LINEUP_URL)
@@ -255,6 +269,13 @@ def _add_core_advice_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--limit", type=int, default=5)
 
 
+def _add_tempo_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--stage", default=None, help="Current stage, for example 3-2")
+    parser.add_argument("--level", type=int, default=None)
+    parser.add_argument("--gold", type=int, default=None)
+    parser.add_argument("--hp", type=int, default=None)
+
+
 def _print_readings(readings: list[OcrReading]) -> None:
     for reading in readings:
         value = reading.text if reading.text else "-"
@@ -273,6 +294,9 @@ def _print_advice(report: AdviceReport) -> None:
     print("Advice:")
     for item in report.advice:
         print(f"- [{item.severity}] {item.title}: {item.detail}")
+    if report.rhythm is not None:
+        print("")
+        print(format_economy_rhythm(report.rhythm))
 
 
 def _print_lineups(lineups: tuple[Lineup, ...], limit: int) -> None:
@@ -302,6 +326,29 @@ def _reading_value(readings: list[OcrReading], name: str) -> int | None:
         if reading.name == name:
             return reading.value
     return None
+
+
+def _reading_text(readings: list[OcrReading], name: str) -> str:
+    for reading in readings:
+        if reading.name == name:
+            return reading.text
+    return ""
+
+
+def _tempo_report_from_readings(
+    readings: list[OcrReading],
+    *,
+    stage: str | None = None,
+    level: int | None = None,
+    gold: int | None = None,
+    hp: int | None = None,
+):
+    return build_economy_rhythm(
+        stage=stage if stage is not None else _reading_text(readings, "stage"),
+        level=level if level is not None else _reading_value(readings, "level"),
+        gold=gold if gold is not None else _reading_value(readings, "gold"),
+        hp=hp if hp is not None else _reading_value(readings, "player_hp"),
+    )
 
 
 def _parse_pool_sizes(value: str) -> dict[int, int]:
@@ -358,6 +405,14 @@ def run_cli(args: argparse.Namespace) -> int:
         readings = read_screenshot(args.input)
         _print_advice(build_advice(readings))
         _export_debug_if_requested(args.input, args.debug_output)
+        return 0
+
+    if args.command == "tempo":
+        print(
+            format_economy_rhythm(
+                build_economy_rhythm(stage=args.stage, level=args.level, gold=args.gold, hp=args.hp)
+            )
+        )
         return 0
 
     if args.command == "lineups":
@@ -585,6 +640,29 @@ def run_cli(args: argparse.Namespace) -> int:
         _export_debug_if_requested(saved, args.debug_output)
         return 0
 
+    if args.command == "capture-tempo":
+        base_output = args.output if args.output.is_absolute() else Path.cwd() / args.output
+        session_dir = base_output / time.strftime("%Y%m%d_%H%M%S")
+        screenshot_path = session_dir / "screen.png"
+        saved = client.capture_screenshot(args.index, screenshot_path, launch_if_needed=args.launch_if_needed)
+        readings = read_screenshot(saved)
+        print(f"Screenshot saved to: {saved}")
+        _print_readings(readings)
+        print("")
+        print(
+            format_economy_rhythm(
+                _tempo_report_from_readings(
+                    readings,
+                    stage=args.stage,
+                    level=args.level,
+                    gold=args.gold,
+                    hp=args.hp,
+                )
+            )
+        )
+        _export_debug_if_requested(saved, args.debug_output)
+        return 0
+
     if args.command == "capture-core-advice":
         base_output = args.output if args.output.is_absolute() else Path.cwd() / args.output
         session_dir = base_output / time.strftime("%Y%m%d_%H%M%S")
@@ -712,6 +790,8 @@ def run_cli(args: argparse.Namespace) -> int:
         )
         print("")
         print(format_item_advice(item_report))
+        print("")
+        print(format_economy_rhythm(_tempo_report_from_readings(readings, level=args.level, gold=args.gold)))
         if detected_level is not None and detected_gold is not None:
             chase_reports = build_chase_reports_from_state(
                 core_report.state,

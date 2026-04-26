@@ -17,7 +17,7 @@ def test_default_preset_contains_core_regions():
     names = {region.name for region in preset.regions}
 
     assert preset is GAME_1920X1080
-    assert {"gold", "level", "player_hp", "shop", "shop_slot_1", "shop_slot_5"} <= names
+    assert {"stage", "gold", "level", "player_hp", "shop", "shop_slot_1", "shop_slot_5"} <= names
 
 
 def test_region_preset_get_rejects_unknown_region():

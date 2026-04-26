@@ -11,6 +11,7 @@ from .advice import build_advice
 from .card_tracker import build_core_advice, format_core_advice, load_card_state, reset_card_state
 from .chase_calculator import build_chase_reports_from_state, format_chase_reports, visible_counts_from_shop
 from .config import AppConfig
+from .economy import build_economy_rhythm, format_economy_rhythm
 from .item_advice import build_item_advice, format_item_advice
 from .ldplayer import GAME_PACKAGE, LDPlayerClient, LDPlayerError
 from .lineups import fetch_jcc_s_lineups, recommend_lineups
@@ -27,6 +28,13 @@ def _reading_value(readings, name: str) -> int | None:
         if reading.name == name:
             return reading.value
     return None
+
+
+def _reading_text(readings, name: str) -> str:
+    for reading in readings:
+        if reading.name == name:
+            return reading.text
+    return ""
 
 
 class JkcheeseGui:
@@ -52,6 +60,7 @@ class JkcheeseGui:
         self.last_lineups_var = tk.StringVar(value="-")
         self.last_core_var = tk.StringVar(value="-")
         self.last_item_var = tk.StringVar(value="-")
+        self.last_tempo_var = tk.StringVar(value="-")
         self.live_tokens_var = tk.StringVar(value="")
         self.owned_cards_var = tk.StringVar(value="")
         self.item_components_var = tk.StringVar(value="")
@@ -97,6 +106,7 @@ class JkcheeseGui:
         self._add_status_row(status, 9, "S Lineups", self.last_lineups_var)
         self._add_status_row(status, 10, "Core Advice", self.last_core_var)
         self._add_status_row(status, 11, "Item Advice", self.last_item_var)
+        self._add_status_row(status, 12, "Tempo Advice", self.last_tempo_var)
 
         actions = ttk.LabelFrame(self.root, text="Actions", padding=16)
         actions.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 12))
@@ -108,6 +118,7 @@ class JkcheeseGui:
         self.capture_regions_button = ttk.Button(actions, text="Capture Regions", command=self.capture_regions)
         self.read_button = ttk.Button(actions, text="Read Numbers", command=self.capture_readings)
         self.advice_button = ttk.Button(actions, text="Get Advice", command=self.capture_advice)
+        self.tempo_button = ttk.Button(actions, text="Tempo Advice", command=self.capture_tempo_advice)
         self.lineups_button = ttk.Button(actions, text="S Lineups", command=self.fetch_s_lineups)
         self.open_folder_button = ttk.Button(actions, text="Open Capture Folder", command=self.open_capture_folder)
 
@@ -119,7 +130,8 @@ class JkcheeseGui:
         self.read_button.grid(row=1, column=1, padx=8, pady=4, sticky="ew")
         self.advice_button.grid(row=1, column=2, padx=8, pady=4, sticky="ew")
         self.lineups_button.grid(row=1, column=3, padx=(8, 0), pady=4, sticky="ew")
-        self.open_folder_button.grid(row=2, column=0, columnspan=4, padx=0, pady=4, sticky="ew")
+        self.tempo_button.grid(row=2, column=0, padx=(0, 8), pady=4, sticky="ew")
+        self.open_folder_button.grid(row=2, column=1, columnspan=3, padx=0, pady=4, sticky="ew")
 
         for column in range(4):
             actions.columnconfigure(column, weight=1)
@@ -207,6 +219,7 @@ class JkcheeseGui:
             self.capture_regions_button,
             self.read_button,
             self.advice_button,
+            self.tempo_button,
             self.lineups_button,
             self.core_button,
             self.shop_scan_button,
@@ -377,13 +390,41 @@ class JkcheeseGui:
             self.root.after(0, lambda: self.last_capture_var.set(str(saved)))
             self.root.after(0, lambda: self.last_reading_var.set(reading_summary))
             self.root.after(0, lambda: self.last_advice_var.set(advice_summary))
+            if report.rhythm is not None:
+                tempo_summary = "; ".join(item.title for item in report.rhythm.advice[:2])
+                self.root.after(0, lambda: self.last_tempo_var.set(tempo_summary or "-"))
 
             warning_lines = [warning.message for warning in report.warnings]
             advice_lines = [f"{item.title}: {item.detail}" for item in report.advice]
-            details = warning_lines + advice_lines
+            rhythm_lines = [format_economy_rhythm(report.rhythm)] if report.rhythm is not None else []
+            details = warning_lines + advice_lines + rhythm_lines
             return "\n".join(details)
 
         self._run_task("Getting advice", task)
+
+    def capture_tempo_advice(self) -> None:
+        def task() -> str:
+            client = self._client()
+            index = self._current_index()
+            capture_dir = self._capture_dir()
+            session_dir = capture_dir / time.strftime("tempo_%Y%m%d_%H%M%S")
+            screenshot_path = session_dir / "screen.png"
+            saved = client.capture_screenshot(index, screenshot_path, launch_if_needed=True)
+            readings = read_screenshot(saved)
+            report = build_economy_rhythm(
+                stage=_reading_text(readings, "stage"),
+                level=_reading_value(readings, "level"),
+                gold=_reading_value(readings, "gold"),
+                hp=_reading_value(readings, "player_hp"),
+            )
+            reading_summary = ", ".join(f"{reading.name}={reading.text or '?'}" for reading in readings)
+            tempo_summary = "; ".join(item.title for item in report.advice[:2])
+            self.root.after(0, lambda: self.last_capture_var.set(str(saved)))
+            self.root.after(0, lambda: self.last_reading_var.set(reading_summary))
+            self.root.after(0, lambda: self.last_tempo_var.set(tempo_summary or "-"))
+            return format_economy_rhythm(report)
+
+        self._run_task("Building tempo advice", task)
 
     def fetch_s_lineups(self) -> None:
         def task() -> str:
@@ -482,6 +523,12 @@ class JkcheeseGui:
             readings = read_screenshot(saved)
             detected_level = _reading_value(readings, "level")
             detected_gold = _reading_value(readings, "gold")
+            rhythm_report = build_economy_rhythm(
+                stage=_reading_text(readings, "stage"),
+                level=detected_level,
+                gold=detected_gold,
+                hp=_reading_value(readings, "player_hp"),
+            )
             lineups = fetch_jcc_s_lineups()
             core_report = build_core_advice(
                 state_path=capture_dir / "card_state.json",
@@ -518,12 +565,16 @@ class JkcheeseGui:
             self.root.after(0, lambda: self.last_lineups_var.set(lineup_summary or "-"))
             self.root.after(0, lambda: self.last_core_var.set(hit_summary or shop_summary))
             self.root.after(0, lambda: self.last_item_var.set(item_summary))
+            tempo_summary = "; ".join(item.title for item in rhythm_report.advice[:2])
+            self.root.after(0, lambda: self.last_tempo_var.set(tempo_summary or "-"))
             return (
                 format_shop_scan(report)
                 + "\n\n"
                 + format_shop_hit_alerts(hit_alerts)
                 + "\n\n"
                 + format_item_advice(item_report)
+                + "\n\n"
+                + format_economy_rhythm(rhythm_report)
                 + "\n\n"
                 + chase_output
                 + "\n\n"

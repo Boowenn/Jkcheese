@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .economy import EconomyRhythmReport, build_economy_rhythm
 from .ocr import OcrReading
 
 
@@ -26,6 +27,7 @@ class AdviceReport:
     readings: tuple[OcrReading, ...]
     warnings: tuple[ReadingWarning, ...]
     advice: tuple[AdviceItem, ...]
+    rhythm: EconomyRhythmReport | None = None
 
     def reading(self, name: str) -> OcrReading | None:
         for reading in self.readings:
@@ -41,6 +43,8 @@ def build_advice(readings: list[OcrReading] | tuple[OcrReading, ...]) -> AdviceR
     gold = _value(readings_tuple, "gold")
     level = _value(readings_tuple, "level")
     hp = _value(readings_tuple, "player_hp")
+    stage = _text(readings_tuple, "stage")
+    rhythm = build_economy_rhythm(stage=stage, level=level, gold=gold, hp=hp)
     advice: list[AdviceItem] = []
 
     if warnings:
@@ -110,7 +114,8 @@ def build_advice(readings: list[OcrReading] | tuple[OcrReading, ...]) -> AdviceR
             )
         )
 
-    if not advice:
+    rhythm_items = tuple(item for item in rhythm.advice if item.action != "check_read")
+    if not advice and not rhythm_items:
         advice.append(
             AdviceItem(
                 title="Keep scouting",
@@ -118,7 +123,7 @@ def build_advice(readings: list[OcrReading] | tuple[OcrReading, ...]) -> AdviceR
             )
         )
 
-    return AdviceReport(readings=readings_tuple, warnings=tuple(warnings), advice=tuple(advice))
+    return AdviceReport(readings=readings_tuple, warnings=tuple(warnings), advice=tuple(advice), rhythm=rhythm)
 
 
 def _build_warnings(readings: tuple[OcrReading, ...]) -> list[ReadingWarning]:
@@ -146,3 +151,10 @@ def _value(readings: tuple[OcrReading, ...], name: str) -> int | None:
         if reading.name == name:
             return reading.value
     return None
+
+
+def _text(readings: tuple[OcrReading, ...], name: str) -> str:
+    for reading in readings:
+        if reading.name == name:
+            return reading.text
+    return ""
