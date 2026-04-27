@@ -284,6 +284,7 @@ py -3.14 -m pytest -q
 - duplicate EXE launches exit quietly instead of showing a confusing "already running" popup
 - compact small-screen dashboard with a shorter default window, scrollable left column, and tighter right-side panels
 - read-only live alerts only: the helper can tell you which visible slot to buy, but it never clicks, buys, rolls, or controls the game; legacy auto-buy settings are migrated off
+- read-only grab-card stability guard: repeated unchanged shop targets are quieted, then reported as likely gold/bench/shop-state blockers instead of ringing every scan
 - automatic capture cleanup: generated screenshots are retained briefly during a match, and when the match appears to end the tool clears match screenshots and resets match card counts
 - single-instance GUI guard so double-clicking the EXE does not open two helper windows
 

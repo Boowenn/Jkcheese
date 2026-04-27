@@ -51,6 +51,7 @@ HIGHLIGHT_COLORS = {
 SEVERITY_PRIORITY = {"critical": 0, "high": 1, "medium": 2, "info": 3}
 BUY_HINT_DISABLED_STATUS = "拿牌提醒：只读模式，不自动点击"
 BUY_HINT_WAITING_STATUS = "拿牌提醒：等待命中"
+BUY_HINT_STALE_LIMIT = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +69,52 @@ class ShopHighlight:
     severity: str
     title: str
     box: tuple[int, int, int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class BuyHintUpdate:
+    status: str
+    should_log: bool
+    should_bell: bool
+
+
+@dataclass(slots=True)
+class BuyHintTracker:
+    last_signature: tuple[tuple[int, str, str], ...] = ()
+    last_shop_names: tuple[str, ...] = ()
+    unchanged_rounds: int = 0
+    stale_reported: bool = False
+
+    def update(self, alerts, shop_names: tuple[str, ...], min_severity: str = "medium") -> BuyHintUpdate:
+        signature = buy_hint_signature(alerts, min_severity)
+        if not signature:
+            self.clear()
+            return BuyHintUpdate(BUY_HINT_WAITING_STATUS, should_log=False, should_bell=False)
+
+        repeated = signature == self.last_signature and shop_names == self.last_shop_names
+        if repeated:
+            self.unchanged_rounds += 1
+        else:
+            self.unchanged_rounds = 0
+            self.stale_reported = False
+
+        self.last_signature = signature
+        self.last_shop_names = shop_names
+
+        if self.unchanged_rounds >= BUY_HINT_STALE_LIMIT:
+            status = "拿牌提醒：目标未变化，可能金币不足或备战席已满"
+            should_log = not self.stale_reported
+            self.stale_reported = True
+            return BuyHintUpdate(status, should_log=should_log, should_bell=False)
+
+        status = format_buy_hint_status(alerts, min_severity)
+        return BuyHintUpdate(status, should_log=not repeated, should_bell=not repeated)
+
+    def clear(self) -> None:
+        self.last_signature = ()
+        self.last_shop_names = ()
+        self.unchanged_rounds = 0
+        self.stale_reported = False
 
 
 def _pulse_color(hex_color: str, factor: float) -> str:
@@ -425,7 +472,7 @@ class JkcheeseGui:
         self._highlight_anim_phase: float = 0.0
         self._highlight_anim_job: str | None = None
         self._highlight_items: list[tuple] = []  # (slot_rect_ids, severity, left, top, right, bottom)
-        self._last_buy_hint_signature: tuple[tuple[int, str, str], ...] = ()
+        self._buy_hint_tracker = BuyHintTracker()
         self._panels: dict[str, tk.Text] = {}
 
         self._build_ui()
@@ -1227,7 +1274,7 @@ class JkcheeseGui:
     def _cleanup_finished_match(self, capture_dir: Path) -> str:
         report = cleanup_capture_dir(capture_dir, max_sessions=0, max_age_days=0)
         reset_card_state(capture_dir / "card_state.json")
-        self._last_buy_hint_signature = ()
+        self._buy_hint_tracker.clear()
         message = f"检测到对局结束，已清理本局截图 {report.deleted_count} 个，并重置本局棋子计数。"
         self.root.after(0, lambda: self.cleanup_status_var.set(message))
         self.root.after(0, lambda: self.auto_shop_var.set("商店：等待下一局"))
@@ -1621,8 +1668,9 @@ class JkcheeseGui:
 
         # Read-only buy guidance: update hints only, never send input to the emulator.
         stage = _reading_text(readings, "stage").strip()
+        buy_hint_update: BuyHintUpdate | None = None
         if hit_alerts and MATCH_STAGE_RE.match(stage):
-            self._update_buy_hints(hit_alerts)
+            buy_hint_update = self._update_buy_hints(hit_alerts, tuple(shop_report.recognized_names))
         elif not MATCH_STAGE_RE.match(stage):
             self._clear_buy_hints()
 
@@ -1647,23 +1695,23 @@ class JkcheeseGui:
                 )
             ),
         )
-        if hit_alerts:
+        if buy_hint_update is not None and buy_hint_update.should_bell:
             self.root.after(0, self.root.bell)
         if not auto:
             self._cleanup_old_captures(capture_dir)
         return "自动识别已更新。" if auto else "一键扫描完成。"
 
-    def _update_buy_hints(self, alerts) -> None:
+    def _update_buy_hints(self, alerts, shop_names: tuple[str, ...] = ()) -> BuyHintUpdate:
         """Show read-only shop-slot guidance without sending clicks or ADB input."""
-        signature = buy_hint_signature(alerts, self.config.auto_buy_min_severity)
-        status = format_buy_hint_status(alerts, self.config.auto_buy_min_severity)
+        update = self._buy_hint_tracker.update(alerts, shop_names, self.config.auto_buy_min_severity)
+        status = update.status
         self.root.after(0, lambda: self.auto_buy_status_var.set(status))
-        if signature and signature != self._last_buy_hint_signature:
+        if update.should_log:
             self.root.after(0, lambda s=status: self._log(s))
-        self._last_buy_hint_signature = signature
+        return update
 
     def _clear_buy_hints(self) -> None:
-        self._last_buy_hint_signature = ()
+        self._buy_hint_tracker.clear()
         self.root.after(0, lambda: self.auto_buy_status_var.set(BUY_HINT_WAITING_STATUS))
 
     def scan_shop(self) -> None:

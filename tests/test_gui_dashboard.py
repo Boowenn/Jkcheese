@@ -3,6 +3,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from jkcheese.gui import (
+    BUY_HINT_STALE_LIMIT,
+    BUY_HINT_WAITING_STATUS,
+    BuyHintTracker,
     ScreenRect,
     build_calibration_highlights,
     build_shop_highlights,
@@ -107,3 +110,48 @@ def test_buy_hint_status_is_read_only_and_filters_severity():
 
     assert buy_hint_signature(alerts, "medium") == ((2, "千珏", "critical"),)
     assert format_buy_hint_status(alerts, "medium") == "拿牌提醒：槽2 千珏"
+
+
+def test_buy_hint_tracker_only_logs_new_targets():
+    tracker = BuyHintTracker()
+    alerts = [SimpleNamespace(slot=2, name="千珏", severity="critical", title="buy")]
+
+    first = tracker.update(alerts, ("千珏",), "medium")
+    second = tracker.update(alerts, ("千珏",), "medium")
+
+    assert first.should_log is True
+    assert first.should_bell is True
+    assert second.should_log is False
+    assert second.should_bell is False
+
+
+def test_buy_hint_tracker_warns_when_target_never_changes():
+    tracker = BuyHintTracker()
+    alerts = [SimpleNamespace(slot=2, name="千珏", severity="critical", title="buy")]
+
+    update = None
+    for _ in range(BUY_HINT_STALE_LIMIT + 1):
+        update = tracker.update(alerts, ("千珏",), "medium")
+
+    assert update is not None
+    assert update.status == "拿牌提醒：目标未变化，可能金币不足或备战席已满"
+    assert update.should_log is True
+    assert update.should_bell is False
+
+    repeated_stale = tracker.update(alerts, ("千珏",), "medium")
+    assert repeated_stale.should_log is False
+    assert repeated_stale.should_bell is False
+
+
+def test_buy_hint_tracker_clear_resets_stale_guard():
+    tracker = BuyHintTracker()
+    alerts = [SimpleNamespace(slot=2, name="千珏", severity="critical", title="buy")]
+    for _ in range(BUY_HINT_STALE_LIMIT + 1):
+        tracker.update(alerts, ("千珏",), "medium")
+
+    waiting = tracker.update([], (), "medium")
+    first_after_clear = tracker.update(alerts, ("千珏",), "medium")
+
+    assert waiting.status == BUY_HINT_WAITING_STATUS
+    assert first_after_clear.should_log is True
+    assert first_after_clear.should_bell is True
