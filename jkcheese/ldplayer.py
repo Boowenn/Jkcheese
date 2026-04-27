@@ -228,6 +228,10 @@ class LDPlayerClient:
             time.sleep(2)
         raise LDPlayerError(f"Android on instance {index} did not finish booting in {timeout} seconds")
 
+    def tap(self, index: int, x: int, y: int) -> None:
+        """Simulate a screen tap at (x, y) on the given emulator instance via ADB."""
+        self.adb(index, f"shell input tap {x} {y}", timeout=10)
+
     def capture_screenshot(
         self,
         index: int,

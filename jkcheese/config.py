@@ -47,6 +47,9 @@ class AppConfig:
     highlight_drag_enabled: bool = False
     highlight_offset_x: int = 0
     highlight_offset_y: int = 0
+    auto_buy_enabled: bool = False
+    auto_buy_min_severity: str = "medium"
+    auto_buy_delay_ms: int = 300
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -88,6 +91,11 @@ class AppConfig:
         )
         config.highlight_offset_x = _safe_int(payload.get("highlight_offset_x"), config.highlight_offset_x, minimum=-5000)
         config.highlight_offset_y = _safe_int(payload.get("highlight_offset_y"), config.highlight_offset_y, minimum=-5000)
+        config.auto_buy_enabled = _safe_bool(payload.get("auto_buy_enabled"), config.auto_buy_enabled)
+        config.auto_buy_min_severity = str(payload.get("auto_buy_min_severity", config.auto_buy_min_severity))
+        if config.auto_buy_min_severity not in {"critical", "high", "medium", "info"}:
+            config.auto_buy_min_severity = "medium"
+        config.auto_buy_delay_ms = _safe_int(payload.get("auto_buy_delay_ms"), config.auto_buy_delay_ms, minimum=100)
         return config
 
     def save(self) -> None:
