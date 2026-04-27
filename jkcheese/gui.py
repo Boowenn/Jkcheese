@@ -67,6 +67,15 @@ class ShopHighlight:
     box: tuple[int, int, int, int]
 
 
+def _pulse_color(hex_color: str, factor: float) -> str:
+    """Scale a hex color brightness by *factor* (0.0-1.0+), clamping to [0,255]."""
+    hex_color = hex_color.lstrip("#")
+    r = min(255, max(0, int(int(hex_color[0:2], 16) * factor)))
+    g = min(255, max(0, int(int(hex_color[2:4], 16) * factor)))
+    b = min(255, max(0, int(int(hex_color[4:6], 16) * factor)))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
 def format_overlay_summary(
     *,
     shop_summary: str,
@@ -348,6 +357,8 @@ class JkcheeseGui:
         self.item_components_var = tk.StringVar(value="")
         self.highlight_offset_x_var = tk.IntVar(value=self.config.highlight_offset_x)
         self.highlight_offset_y_var = tk.IntVar(value=self.config.highlight_offset_y)
+        self.auto_buy_var = tk.BooleanVar(value=self.config.auto_buy_enabled)
+        self.auto_buy_status_var = tk.StringVar(value="自动拿牌：已关闭")
         self.stage_value_var = tk.StringVar(value="?")
         self.level_value_var = tk.StringVar(value="?")
         self.gold_value_var = tk.StringVar(value="?")
@@ -365,6 +376,9 @@ class JkcheeseGui:
         self._highlight_canvas: tk.Canvas | None = None
         self._highlight_drag: tuple[int, int] | None = None
         self._highlight_auto_rect: ScreenRect | None = None
+        self._highlight_anim_phase: float = 0.0
+        self._highlight_anim_job: str | None = None
+        self._highlight_items: list[tuple] = []  # (slot_rect_ids, severity, left, top, right, bottom)
         self._panels: dict[str, tk.Text] = {}
 
         self._build_ui()
@@ -611,18 +625,21 @@ class JkcheeseGui:
         canvas.configure(width=rect.width, height=rect.height)
         canvas.delete("all")
 
+        self._highlight_items = []
         for highlight in highlights:
             left, top, right, bottom = map_capture_box_to_screen(highlight.box, source_size, rect)
             color = HIGHLIGHT_COLORS.get(highlight.severity, "#ffd60a")
             line_width = 6 if highlight.severity in {"critical", "high"} else 4
-            canvas.create_rectangle(
+            rect_id = canvas.create_rectangle(
                 left + 4,
                 top + 4,
                 right - 4,
                 bottom - 4,
                 outline=color,
                 width=line_width,
+                tags=("glow",),
             )
+            self._highlight_items.append((rect_id, highlight.severity, left, top, right, bottom))
             label = f"买 {highlight.name}"
             label_x = left + 10
             label_y = max(8, top - 30)
@@ -646,6 +663,9 @@ class JkcheeseGui:
                 )
                 canvas.tag_raise(text_id, bg_id)
 
+        # 启动高亮呼吸动画
+        self._start_highlight_animation()
+
         if self.highlight_drag_var.get() or force_calibration:
             canvas.create_rectangle(8, 8, 232, 36, fill="#17362f", outline="#ffd60a", width=2)
             canvas.create_text(
@@ -663,10 +683,45 @@ class JkcheeseGui:
         _set_window_click_through(overlay, not self.highlight_drag_var.get())
 
     def _hide_shop_highlights(self) -> None:
+        self._stop_highlight_animation()
+        self._highlight_items = []
         if self._highlight_canvas is not None:
             self._highlight_canvas.delete("all")
         if self._highlight_overlay is not None:
             self._highlight_overlay.withdraw()
+
+    def _start_highlight_animation(self) -> None:
+        """启动高亮边框呼吸脉冲动画（参考 JinChanChanTool 的渐变发光效果）。"""
+        self._stop_highlight_animation()
+        self._highlight_anim_phase = 0.0
+        self._highlight_anim_tick()
+
+    def _stop_highlight_animation(self) -> None:
+        if self._highlight_anim_job is not None:
+            self.root.after_cancel(self._highlight_anim_job)
+            self._highlight_anim_job = None
+
+    def _highlight_anim_tick(self) -> None:
+        """每帧更新高亮边框亮度，产生呼吸脉冲效果。"""
+        if self._closed or not self._highlight_items or self._highlight_canvas is None:
+            return
+        import math
+        self._highlight_anim_phase += 0.12
+        if self._highlight_anim_phase > 2 * math.pi:
+            self._highlight_anim_phase -= 2 * math.pi
+        # 脉冲因子 0.7 ~ 1.0
+        pulse = 0.85 + 0.15 * math.sin(self._highlight_anim_phase)
+        canvas = self._highlight_canvas
+        for rect_id, severity, left, top, right, bottom in self._highlight_items:
+            base_color = HIGHLIGHT_COLORS.get(severity, "#ffd60a")
+            pulsed = _pulse_color(base_color, pulse)
+            base_width = 6 if severity in {"critical", "high"} else 4
+            pulsed_width = max(2, round(base_width * (0.8 + 0.4 * math.sin(self._highlight_anim_phase))))
+            try:
+                canvas.itemconfigure(rect_id, outline=pulsed, width=pulsed_width)
+            except tk.TclError:
+                pass
+        self._highlight_anim_job = self.root.after(50, self._highlight_anim_tick)
 
     def show_highlight_calibration(self) -> None:
         self.highlight_drag_var.set(True)
@@ -698,6 +753,11 @@ class JkcheeseGui:
     def _on_auto_settings_changed(self) -> None:
         enabled = self.auto_scan_var.get()
         self.auto_scan_status_var.set("自动识别：已开启" if enabled else "自动识别：已暂停")
+        self._save_config()
+
+    def _on_auto_buy_toggled(self) -> None:
+        enabled = self.auto_buy_var.get()
+        self.auto_buy_status_var.set("自动拿牌：已开启" if enabled else "自动拿牌：已关闭")
         self._save_config()
 
     def _configure_styles(self) -> None:
@@ -781,10 +841,17 @@ class JkcheeseGui:
             command=self._on_highlight_drag_toggled,
         )
         self.highlight_preview_button = ttk.Button(auto_bar, text="显示校准框", command=self.show_highlight_calibration)
+        self.auto_buy_check = ttk.Checkbutton(
+            auto_bar,
+            text="自动拿牌",
+            variable=self.auto_buy_var,
+            command=self._on_auto_buy_toggled,
+        )
         self.auto_scan_check.grid(row=0, column=0, sticky="w")
         self.overlay_check.grid(row=0, column=1, sticky="w")
         self.highlight_drag_check.grid(row=0, column=2, sticky="w")
         self.highlight_preview_button.grid(row=0, column=3, sticky="ew", padx=(6, 0))
+        self.auto_buy_check.grid(row=1, column=0, sticky="w", pady=(4, 0))
 
         status = tk.Frame(card, bg="#f0e6d2", padx=8, pady=8)
         status.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(10, 0))
@@ -794,7 +861,8 @@ class JkcheeseGui:
         self._status_line(status, 2, "游戏", self.game_process_var)
         self._status_line(status, 3, "APK", self.apk_path_var)
         self._status_line(status, 4, "自动", self.auto_scan_status_var)
-        self._status_line(status, 5, "清理", self.cleanup_status_var)
+        self._status_line(status, 5, "拿牌", self.auto_buy_status_var)
+        self._status_line(status, 6, "清理", self.cleanup_status_var)
 
     def _build_snapshot_card(self, parent: tk.Widget) -> None:
         card = self._card(parent, "截图状态")
@@ -954,6 +1022,7 @@ class JkcheeseGui:
         self.config.highlight_drag_enabled = self.highlight_drag_var.get()
         self.config.highlight_offset_x = int(self.highlight_offset_x_var.get())
         self.config.highlight_offset_y = int(self.highlight_offset_y_var.get())
+        self.config.auto_buy_enabled = self.auto_buy_var.get()
         self.config.save()
 
     def _current_index(self) -> int:
@@ -1472,6 +1541,10 @@ class JkcheeseGui:
         self.root.after(0, lambda: self.overlay_text_var.set(overlay_summary))
         self.root.after(0, lambda: self._draw_shop_highlights(hit_alerts, source_size))
 
+        # 自动拿牌：当检测到目标卡牌时，自动点击商店对应槽位
+        if self.auto_buy_var.get() and hit_alerts:
+            self._auto_buy_cards(client, hit_alerts, source_size)
+
         self._queue_panel(
             "current",
             f"截图读数：{reading_summary}\n商店来牌：{shop_summary}\n\n{format_economy_rhythm(rhythm_report)}",
@@ -1498,6 +1571,46 @@ class JkcheeseGui:
         if not auto:
             self._cleanup_old_captures(capture_dir)
         return "自动识别已更新。" if auto else "一键扫描完成。"
+
+    def _auto_buy_cards(self, client: "LDPlayerClient", alerts, source_size: tuple[int, int]) -> None:
+        """根据 shop_hit_alerts 自动点击商店槽位购买卡牌。"""
+        severity_priority = {"critical": 0, "high": 1, "medium": 2, "info": 3}
+        min_severity = self.config.auto_buy_min_severity
+        min_priority = severity_priority.get(min_severity, 2)
+        preset = default_preset()
+        index = self._current_index()
+        delay_sec = self.config.auto_buy_delay_ms / 1000.0
+        bought: list[str] = []
+
+        # 按严重程度排序，优先买最急需的
+        sorted_alerts = sorted(alerts, key=lambda a: severity_priority.get(a.severity, 99))
+
+        for alert in sorted_alerts:
+            if alert.severity == "skip":
+                continue
+            priority = severity_priority.get(alert.severity, 99)
+            if priority > min_priority:
+                continue
+            slot = int(alert.slot)
+            if slot not in range(1, 6):
+                continue
+            region = preset.get(f"shop_slot_{slot}")
+            # 计算点击中心坐标（基于游戏内坐标）
+            tap_x = region.x + region.width // 2
+            tap_y = region.y + region.height // 2
+            try:
+                client.tap(index, tap_x, tap_y)
+                bought.append(f"槽{slot} {alert.name}")
+                time.sleep(delay_sec)
+            except Exception as exc:
+                self._log(f"自动拿牌点击失败 槽{slot}: {exc}")
+
+        if bought:
+            msg = f"自动拿牌：已购买 {', '.join(bought)}"
+            self._log(msg)
+            self.root.after(0, lambda: self.auto_buy_status_var.set(msg))
+        else:
+            self.root.after(0, lambda: self.auto_buy_status_var.set("自动拿牌：本轮无需购买"))
 
     def scan_shop(self) -> None:
         self._run_task("一键扫描当前局势", lambda: self._scan_current_state(auto=False))
