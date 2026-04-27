@@ -17,6 +17,8 @@ def test_config_roundtrip(tmp_path, monkeypatch):
         auto_scan_enabled=False,
         auto_scan_interval_seconds=15,
         overlay_enabled=False,
+        overlay_x=321,
+        overlay_y=123,
         highlight_drag_enabled=True,
         highlight_offset_x=24,
         highlight_offset_y=-18,
@@ -33,6 +35,8 @@ def test_config_roundtrip(tmp_path, monkeypatch):
     assert loaded.auto_scan_enabled is False
     assert loaded.auto_scan_interval_seconds == 15
     assert loaded.overlay_enabled is False
+    assert loaded.overlay_x == 321
+    assert loaded.overlay_y == 123
     assert loaded.highlight_drag_enabled is True
     assert loaded.highlight_offset_x == 24
     assert loaded.highlight_offset_y == -18

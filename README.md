@@ -244,7 +244,7 @@ py -3.14 -m pytest -q
 
 ## Current module
 
-`v0.13.3` includes the first twelve modules plus a usability fix pass:
+`v0.14.1` includes the first twelve modules plus a usability fix pass:
 
 - LDPlayer connection
 - game launch
@@ -276,7 +276,8 @@ py -3.14 -m pytest -q
 - GUI Tempo Advice button and Scan Shop rhythm integration for level/save/small-D/all-in suggestions
 - one-click GUI scan that updates S lineup, star warnings, chase odds, item advice, tempo advice, and detailed logs together
 - automatic in-game shop scanning for the GUI, using a reusable `_live` screenshot so background scans do not flood the disk
-- right-top semi-transparent overlay for live "buy this slot", S lineup, chase risk, and tempo hints without switching away from the game
+- freely draggable semi-transparent overlay for live "buy this slot", S lineup, chase risk, and tempo hints without switching away from the game
+- overlay placement is remembered between launches, with an in-GUI reset button if you want to send it back to the default corner
 - click-through shop-slot highlight boxes that frame visible key cards directly over the LDPlayer shop when the window can be located
 - draggable shop highlight calibration mode for misaligned overlays; turn it off after calibration to restore click-through play
 - draggable calibration now keeps the saved offset instead of snapping back to the fixed LDPlayer position

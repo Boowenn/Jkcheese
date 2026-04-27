@@ -10,6 +10,7 @@ from jkcheese.gui import (
     format_overlay_summary,
     format_reading_summary,
     map_capture_box_to_screen,
+    overlay_geometry_for_position,
 )
 from jkcheese.ocr import OcrReading
 
@@ -86,3 +87,11 @@ def test_choose_highlight_target_rect_applies_saved_offset():
         width=300,
         height=200,
     )
+
+
+def test_overlay_geometry_restores_saved_free_position():
+    assert overlay_geometry_for_position(1920, 420, 96) == "340x150+420+96"
+
+
+def test_overlay_geometry_falls_back_to_top_right_when_no_saved_position():
+    assert overlay_geometry_for_position(1280, None, None) == "340x150+912+72"

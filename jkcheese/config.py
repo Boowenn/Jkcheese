@@ -42,12 +42,11 @@ class AppConfig:
     auto_scan_enabled: bool = True
     auto_scan_interval_seconds: int = 12
     overlay_enabled: bool = True
+    overlay_x: int | None = None
+    overlay_y: int | None = None
     highlight_drag_enabled: bool = False
     highlight_offset_x: int = 0
     highlight_offset_y: int = 0
-    auto_buy_enabled: bool = False
-    auto_buy_min_severity: str = "medium"
-    auto_buy_delay_ms: int = 300
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -81,17 +80,14 @@ class AppConfig:
             minimum=5,
         )
         config.overlay_enabled = _safe_bool(payload.get("overlay_enabled"), config.overlay_enabled)
+        config.overlay_x = _safe_optional_int(payload.get("overlay_x"), config.overlay_x)
+        config.overlay_y = _safe_optional_int(payload.get("overlay_y"), config.overlay_y)
         config.highlight_drag_enabled = _safe_bool(
             payload.get("highlight_drag_enabled"),
             config.highlight_drag_enabled,
         )
         config.highlight_offset_x = _safe_int(payload.get("highlight_offset_x"), config.highlight_offset_x, minimum=-5000)
         config.highlight_offset_y = _safe_int(payload.get("highlight_offset_y"), config.highlight_offset_y, minimum=-5000)
-        config.auto_buy_enabled = _safe_bool(payload.get("auto_buy_enabled"), config.auto_buy_enabled)
-        config.auto_buy_min_severity = str(payload.get("auto_buy_min_severity", config.auto_buy_min_severity))
-        if config.auto_buy_min_severity not in {"critical", "high", "medium", "info"}:
-            config.auto_buy_min_severity = "medium"
-        config.auto_buy_delay_ms = _safe_int(payload.get("auto_buy_delay_ms"), config.auto_buy_delay_ms, minimum=100)
         return config
 
     def save(self) -> None:
@@ -106,6 +102,15 @@ def _safe_int(value: object, default: int, *, minimum: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(minimum, parsed)
+
+
+def _safe_optional_int(value: object, default: int | None) -> int | None:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _safe_bool(value: object, default: bool) -> bool:
