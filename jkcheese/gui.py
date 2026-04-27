@@ -394,6 +394,7 @@ class JkcheeseGui:
         self._highlight_anim_phase: float = 0.0
         self._highlight_anim_job: str | None = None
         self._highlight_items: list[tuple] = []  # (slot_rect_ids, severity, left, top, right, bottom)
+        self._last_auto_buy_slots: set[int] = set()  # 上次自动拿牌已购买的槽位，防止重复点击
         self._panels: dict[str, tk.Text] = {}
 
         self._build_ui()
@@ -1193,6 +1194,7 @@ class JkcheeseGui:
     def _cleanup_finished_match(self, capture_dir: Path) -> str:
         report = cleanup_capture_dir(capture_dir, max_sessions=0, max_age_days=0)
         reset_card_state(capture_dir / "card_state.json")
+        self._last_auto_buy_slots = set()
         message = f"检测到对局结束，已清理本局截图 {report.deleted_count} 个，并重置本局棋子计数。"
         self.root.after(0, lambda: self.cleanup_status_var.set(message))
         self.root.after(0, lambda: self.auto_shop_var.set("商店：等待下一局"))
@@ -1584,9 +1586,12 @@ class JkcheeseGui:
         self.root.after(0, lambda: self.overlay_text_var.set(overlay_summary))
         self.root.after(0, lambda: self._draw_shop_highlights(hit_alerts, source_size))
 
-        # 自动拿牌：当检测到目标卡牌时，自动点击商店对应槽位
-        if self.auto_buy_var.get() and hit_alerts:
+        # 自动拿牌：仅在对局中（阶段格式为 X-Y）且检测到目标卡牌时才自动点击
+        stage = _reading_text(readings, "stage").strip()
+        if self.auto_buy_var.get() and hit_alerts and MATCH_STAGE_RE.match(stage):
             self._auto_buy_cards(client, hit_alerts, source_size)
+        elif not MATCH_STAGE_RE.match(stage):
+            self._last_auto_buy_slots = set()  # 不在对局中，清空去重缓存
 
         self._queue_panel(
             "current",
@@ -1625,7 +1630,8 @@ class JkcheeseGui:
         delay_sec = self.config.auto_buy_delay_ms / 1000.0
         bought: list[str] = []
 
-        # 按严重程度排序，优先买最急需的
+        # 构建本轮要买的槽位集合，用于和上次对比去重
+        current_slots: set[int] = set()
         sorted_alerts = sorted(alerts, key=lambda a: severity_priority.get(a.severity, 99))
 
         for alert in sorted_alerts:
@@ -1637,8 +1643,13 @@ class JkcheeseGui:
             slot = int(alert.slot)
             if slot not in range(1, 6):
                 continue
+            current_slots.add(slot)
+
+            # 跳过上轮已经点击过的同一槽位，防止重复购买
+            if slot in self._last_auto_buy_slots:
+                continue
+
             region = preset.get(f"shop_slot_{slot}")
-            # 计算点击中心坐标（基于游戏内坐标）
             tap_x = region.x + region.width // 2
             tap_y = region.y + region.height // 2
             try:
@@ -1646,11 +1657,14 @@ class JkcheeseGui:
                 bought.append(f"槽{slot} {alert.name}")
                 time.sleep(delay_sec)
             except Exception as exc:
-                self._log(f"自动拿牌点击失败 槽{slot}: {exc}")
+                self.root.after(0, lambda e=exc, s=slot: self._log(f"自动拿牌点击失败 槽{s}: {e}"))
+
+        # 记录本轮已买槽位，下次扫描如果同样的槽位还在就跳过
+        self._last_auto_buy_slots = current_slots
 
         if bought:
             msg = f"自动拿牌：已购买 {', '.join(bought)}"
-            self._log(msg)
+            self.root.after(0, lambda: self._log(msg))
             self.root.after(0, lambda: self.auto_buy_status_var.set(msg))
         else:
             self.root.after(0, lambda: self.auto_buy_status_var.set("自动拿牌：本轮无需购买"))
