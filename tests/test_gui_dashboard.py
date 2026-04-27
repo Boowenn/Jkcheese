@@ -14,6 +14,7 @@ from jkcheese.gui import (
     format_buy_hint_status,
     format_overlay_summary,
     format_reading_summary,
+    highlight_offset_for_position,
     map_capture_box_to_screen,
     overlay_geometry_for_position,
 )
@@ -94,12 +95,22 @@ def test_choose_highlight_target_rect_applies_saved_offset():
     )
 
 
+def test_highlight_offset_for_position_uses_auto_window_origin():
+    auto_rect = ScreenRect(x=100, y=200, width=960, height=540)
+
+    assert highlight_offset_for_position(75, 230, auto_rect) == (-25, 30)
+
+
+def test_highlight_offset_without_auto_rect_is_zero():
+    assert highlight_offset_for_position(75, 230, None) == (0, 0)
+
+
 def test_overlay_geometry_restores_saved_free_position():
     assert overlay_geometry_for_position(1920, 420, 96) == "340x150+420+96"
 
 
-def test_overlay_geometry_falls_back_to_top_right_when_no_saved_position():
-    assert overlay_geometry_for_position(1280, None, None) == "340x150+912+72"
+def test_overlay_geometry_falls_back_to_top_left_when_no_saved_position():
+    assert overlay_geometry_for_position(1280, None, None) == "340x150+28+72"
 
 
 def test_buy_hint_status_is_read_only_and_filters_severity():

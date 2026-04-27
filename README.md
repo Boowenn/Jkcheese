@@ -277,9 +277,10 @@ py -3.14 -m pytest -q
 - one-click GUI scan that updates S lineup, star warnings, chase odds, item advice, tempo advice, and detailed logs together
 - automatic in-game shop scanning for the GUI, using a reusable `_live` screenshot so background scans do not flood the disk
 - freely draggable semi-transparent overlay for live "buy this slot", S lineup, chase risk, and tempo hints without switching away from the game
-- overlay placement is remembered between launches, with an in-GUI reset button if you want to send it back to the default corner
+- overlay placement is remembered between launches, defaults to the top-left corner, with an in-GUI reset button if you want to send it back to the default corner
 - click-through shop-slot highlight boxes that frame visible key cards directly over the LDPlayer shop when the window can be located
 - draggable shop highlight calibration mode for misaligned overlays; it is session-only so the next launch restores click-through play
+- highlight calibration drag now ends cleanly on mouse release and reset position also clears the saved highlight offset
 - draggable calibration now keeps the saved offset instead of snapping back to the fixed LDPlayer position
 - duplicate EXE launches exit quietly instead of showing a confusing "already running" popup
 - compact small-screen dashboard with a shorter default window, scrollable left column, and tighter right-side panels

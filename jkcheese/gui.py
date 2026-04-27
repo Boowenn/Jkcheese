@@ -243,6 +243,12 @@ def choose_highlight_target_rect(
     )
 
 
+def highlight_offset_for_position(x: int, y: int, auto_rect: ScreenRect | None) -> tuple[int, int]:
+    if auto_rect is None:
+        return (0, 0)
+    return (x - auto_rect.x, y - auto_rect.y)
+
+
 def overlay_geometry_for_position(
     screen_width: int,
     overlay_x: int | None,
@@ -253,7 +259,7 @@ def overlay_geometry_for_position(
 ) -> str:
     if overlay_x is not None and overlay_y is not None:
         return f"{width}x{height}+{overlay_x}+{overlay_y}"
-    x = max(20, screen_width - width - 28)
+    x = 28 if screen_width > 0 else 20
     y = 72
     return f"{width}x{height}+{x}+{y}"
 
@@ -469,6 +475,7 @@ class JkcheeseGui:
         self._highlight_canvas: tk.Canvas | None = None
         self._highlight_drag: tuple[int, int] | None = None
         self._highlight_auto_rect: ScreenRect | None = None
+        self._highlight_calibration_visible = False
         self._highlight_anim_phase: float = 0.0
         self._highlight_anim_job: str | None = None
         self._highlight_items: list[tuple] = []  # (slot_rect_ids, severity, left, top, right, bottom)
@@ -639,8 +646,10 @@ class JkcheeseGui:
         canvas.pack(fill="both", expand=True)
         overlay.bind("<ButtonPress-1>", self._start_highlight_drag)
         overlay.bind("<B1-Motion>", self._drag_highlight)
+        overlay.bind("<ButtonRelease-1>", self._finish_highlight_drag)
         canvas.bind("<ButtonPress-1>", self._start_highlight_drag)
         canvas.bind("<B1-Motion>", self._drag_highlight)
+        canvas.bind("<ButtonRelease-1>", self._finish_highlight_drag)
         self._highlight_overlay = overlay
         self._highlight_canvas = canvas
         overlay.update_idletasks()
@@ -690,12 +699,18 @@ class JkcheeseGui:
         y = self._highlight_overlay.winfo_y() + delta_y
         width = self._highlight_overlay.winfo_width()
         height = self._highlight_overlay.winfo_height()
-        self._highlight_overlay.geometry(f"+{x}+{y}")
+        self._highlight_overlay.geometry(f"{width}x{height}+{x}+{y}")
         if self._highlight_auto_rect is not None:
-            self.highlight_offset_x_var.set(x - self._highlight_auto_rect.x)
-            self.highlight_offset_y_var.set(y - self._highlight_auto_rect.y)
-            self._save_config()
+            offset_x, offset_y = highlight_offset_for_position(x, y, self._highlight_auto_rect)
+            self.highlight_offset_x_var.set(offset_x)
+            self.highlight_offset_y_var.set(offset_y)
         self._highlight_drag = (event.x_root, event.y_root)
+
+    def _finish_highlight_drag(self, _event=None) -> None:
+        if self._highlight_drag is None:
+            return
+        self._highlight_drag = None
+        self._save_config()
 
     def _draw_shop_highlights(self, alerts, source_size: tuple[int, int], *, force_calibration: bool = False) -> None:
         if self._highlight_overlay is None or self._highlight_canvas is None:
@@ -705,9 +720,11 @@ class JkcheeseGui:
             return
 
         highlights = build_shop_highlights(alerts, source_size)
+        self._highlight_calibration_visible = False
         if not highlights:
             if force_calibration or self.highlight_drag_var.get():
                 highlights = build_calibration_highlights(source_size)
+                self._highlight_calibration_visible = True
             else:
                 self._hide_shop_highlights()
                 return
@@ -792,6 +809,8 @@ class JkcheeseGui:
     def _hide_shop_highlights(self) -> None:
         self._stop_highlight_animation()
         self._highlight_items = []
+        self._highlight_drag = None
+        self._highlight_calibration_visible = False
         if self._highlight_canvas is not None:
             self._highlight_canvas.delete("all")
         if self._highlight_overlay is not None:
@@ -838,12 +857,21 @@ class JkcheeseGui:
     def reset_overlay_position(self) -> None:
         self.config.overlay_x = None
         self.config.overlay_y = None
+        self.config.highlight_offset_x = 0
+        self.config.highlight_offset_y = 0
+        self.highlight_offset_x_var.set(0)
+        self.highlight_offset_y_var.set(0)
         if self._overlay is not None:
             self._overlay.geometry(self._default_overlay_geometry())
             if self.overlay_enabled_var.get():
                 self._overlay.deiconify()
                 self._overlay.lift()
                 self._overlay.attributes("-topmost", True)
+        if self._highlight_overlay is not None and self._highlight_auto_rect is not None:
+            self._highlight_overlay.geometry(
+                f"{self._highlight_auto_rect.width}x{self._highlight_auto_rect.height}"
+                f"+{self._highlight_auto_rect.x}+{self._highlight_auto_rect.y}"
+            )
         self._save_config()
 
     def _on_overlay_toggled(self) -> None:
@@ -865,7 +893,10 @@ class JkcheeseGui:
             self.auto_scan_status_var.set("高亮框校准：可自由拖动，调完请取消勾选")
             self._draw_shop_highlights((), default_preset().base_size, force_calibration=True)
         else:
+            self._highlight_drag = None
             self.auto_scan_status_var.set("高亮框校准：已记住偏移并点击穿透")
+            if self._highlight_calibration_visible:
+                self._hide_shop_highlights()
         self._save_config()
 
     def _on_auto_settings_changed(self) -> None:
