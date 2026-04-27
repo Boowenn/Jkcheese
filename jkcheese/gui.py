@@ -264,6 +264,23 @@ def overlay_geometry_for_position(
     return f"{width}x{height}+{x}+{y}"
 
 
+def should_reset_legacy_overlay_position(
+    screen_width: int,
+    overlay_x: int | None,
+    overlay_y: int | None,
+    *,
+    width: int = 340,
+) -> bool:
+    if screen_width <= 0 or overlay_x is None or overlay_y is None:
+        return False
+    legacy_right_zone = max(0, screen_width - width - 80)
+    return overlay_x >= legacy_right_zone and 0 <= overlay_y <= 140
+
+
+def should_reset_stale_highlight_offset(offset_x: int, offset_y: int) -> bool:
+    return abs(offset_x) >= 400 or abs(offset_y) >= 250
+
+
 def _shorten(text: str, limit: int) -> str:
     normalized = " ".join(str(text).split())
     if len(normalized) <= limit:
@@ -427,6 +444,7 @@ class JkcheeseGui:
         self.root.geometry(self._default_main_geometry())
         self.root.minsize(960, 620)
         self.root.configure(bg=ROOT_BG)
+        self._migrate_legacy_window_positions()
 
         self.ldplayer_root_var = tk.StringVar(value=self.config.ldplayer_root)
         self.instance_var = tk.StringVar(value=str(self.config.instance_index))
@@ -487,6 +505,20 @@ class JkcheeseGui:
         self._build_shop_highlight_overlay()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(1000, self._schedule_auto_scan)
+
+    def _migrate_legacy_window_positions(self) -> None:
+        if self.config.ui_position_version >= 1:
+            return
+
+        screen_width = self.root.winfo_screenwidth()
+        if should_reset_legacy_overlay_position(screen_width, self.config.overlay_x, self.config.overlay_y):
+            self.config.overlay_x = None
+            self.config.overlay_y = None
+        if should_reset_stale_highlight_offset(self.config.highlight_offset_x, self.config.highlight_offset_y):
+            self.config.highlight_offset_x = 0
+            self.config.highlight_offset_y = 0
+        self.config.ui_position_version = 1
+        self.config.save()
 
     def _default_main_geometry(self) -> str:
         screen_width = self.root.winfo_screenwidth()

@@ -25,6 +25,7 @@ Current module scope:
 - suggest main carry, main tank, and item direction from real-time S/S- lineups, shop hits, tracked cards, and optional item components
 - suggest when to level, save, small-D, or all-in from stage, level, gold, and HP
 - provide a Chinese dashboard EXE with left-side screenshot status and right-side recommendation panels
+- migrate old saved overlay/highlight positions so the floating hint returns to the top-left and stale calibration windows do not block clicks
 - build a one-file EXE with PyInstaller
 - run unit tests
 - run CI on each push

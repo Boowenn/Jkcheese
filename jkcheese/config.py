@@ -50,6 +50,7 @@ class AppConfig:
     auto_buy_enabled: bool = False
     auto_buy_min_severity: str = "medium"
     auto_buy_delay_ms: int = 300
+    ui_position_version: int = 1
 
     def __post_init__(self) -> None:
         self.highlight_drag_enabled = False
@@ -89,6 +90,7 @@ class AppConfig:
         config.overlay_enabled = _safe_bool(payload.get("overlay_enabled"), config.overlay_enabled)
         config.overlay_x = _safe_optional_int(payload.get("overlay_x"), config.overlay_x)
         config.overlay_y = _safe_optional_int(payload.get("overlay_y"), config.overlay_y)
+        config.ui_position_version = _safe_int(payload.get("ui_position_version"), 0, minimum=0)
         # Calibration drag mode must be session-only; persisting it can make the
         # highlight overlay intercept clicks on the next launch.
         config.highlight_drag_enabled = False

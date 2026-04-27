@@ -17,6 +17,8 @@ from jkcheese.gui import (
     highlight_offset_for_position,
     map_capture_box_to_screen,
     overlay_geometry_for_position,
+    should_reset_legacy_overlay_position,
+    should_reset_stale_highlight_offset,
 )
 from jkcheese.ocr import OcrReading
 
@@ -111,6 +113,19 @@ def test_overlay_geometry_restores_saved_free_position():
 
 def test_overlay_geometry_falls_back_to_top_left_when_no_saved_position():
     assert overlay_geometry_for_position(1280, None, None) == "340x150+28+72"
+
+
+def test_legacy_overlay_position_migration_detects_old_right_default():
+    assert should_reset_legacy_overlay_position(1920, 1552, 72) is True
+
+
+def test_legacy_overlay_position_migration_preserves_user_left_position():
+    assert should_reset_legacy_overlay_position(1920, 420, 96) is False
+
+
+def test_stale_highlight_offset_migration_resets_large_drag_offsets():
+    assert should_reset_stale_highlight_offset(-494, 277) is True
+    assert should_reset_stale_highlight_offset(24, -18) is False
 
 
 def test_buy_hint_status_is_read_only_and_filters_severity():

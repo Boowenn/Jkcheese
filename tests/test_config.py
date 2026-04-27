@@ -23,6 +23,7 @@ def test_config_roundtrip(tmp_path, monkeypatch):
         highlight_drag_enabled=True,
         highlight_offset_x=24,
         highlight_offset_y=-18,
+        ui_position_version=1,
     )
     config.save()
 
@@ -41,6 +42,7 @@ def test_config_roundtrip(tmp_path, monkeypatch):
     assert loaded.highlight_drag_enabled is False
     assert loaded.highlight_offset_x == 24
     assert loaded.highlight_offset_y == -18
+    assert loaded.ui_position_version == 1
     assert loaded.auto_buy_enabled is False
 
 
@@ -64,6 +66,19 @@ def test_legacy_highlight_drag_config_is_session_only(tmp_path, monkeypatch):
     loaded = AppConfig.load()
 
     assert loaded.highlight_drag_enabled is False
+
+
+def test_legacy_config_without_position_version_is_marked_for_gui_migration(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    config_path = tmp_path / "Jkcheese" / "config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(json.dumps({"overlay_x": 1552, "overlay_y": 72}), encoding="utf-8")
+
+    loaded = AppConfig.load()
+
+    assert loaded.overlay_x == 1552
+    assert loaded.overlay_y == 72
+    assert loaded.ui_position_version == 0
 
 
 def test_auto_buy_cannot_be_enabled_by_constructor():
