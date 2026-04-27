@@ -14,6 +14,7 @@ Current module scope:
 - print confidence warnings and stage-aware economy rhythm advice
 - export OCR debug crops for calibration
 - fetch S and S- Golden Spatula lineups from the public `实时铲榜` Tencent Docs sheet
+- read local Excel/CSV lineup-code files (`lineups.xlsx`, `阵容码.xlsx`, etc.) and parse `TFTSet17` lineup codes into hero lists
 - recommend S/S- lineups from live card/name tokens
 - track owned card copies and warn for cost-aware 4/5-cost star progress
 - combine live tokens, owned cards, and current S/S- lineups into one core advice view

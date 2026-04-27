@@ -303,8 +303,9 @@ def _print_advice(report: AdviceReport) -> None:
 def _print_lineups(lineups: tuple[Lineup, ...], limit: int) -> None:
     for lineup in lineups[:limit]:
         notes = f" | notes: {'; '.join(lineup.notes)}" if lineup.notes else ""
+        champions = f" | heroes: {', '.join(lineup.champions)}" if lineup.champions else ""
         code = f" | code: {lineup.code}" if lineup.code else ""
-        print(f"- [{lineup.tier}] {lineup.name}{notes}{code}")
+        print(f"- [{lineup.tier}] {lineup.name}{champions}{notes}{code}")
 
 
 def _print_lineup_recommendations(recommendations: tuple[LineupRecommendation, ...]) -> None:
@@ -312,7 +313,8 @@ def _print_lineup_recommendations(recommendations: tuple[LineupRecommendation, .
         lineup = item.lineup
         matched = f" | matched: {', '.join(item.matched_tokens)}" if item.matched_tokens else ""
         notes = f" | notes: {'; '.join(lineup.notes)}" if lineup.notes else ""
-        print(f"- [{lineup.tier}] {lineup.name} (score {item.score}){matched}{notes}")
+        champions = f" | heroes: {', '.join(lineup.champions)}" if lineup.champions else ""
+        print(f"- [{lineup.tier}] {lineup.name} (score {item.score}){matched}{champions}{notes}")
         print(f"  reason: {item.reason}")
         if lineup.code:
             print(f"  code: {lineup.code}")

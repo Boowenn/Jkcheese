@@ -445,8 +445,9 @@ def format_lineup_panel(core_report) -> str:
         return "\n".join(lines)
     for index, item in enumerate(core_report.recommendations[:5], start=1):
         matched = f" | 命中: {', '.join(item.matched_tokens)}" if item.matched_tokens else ""
+        champions = f" | 英雄: {', '.join(item.lineup.champions[:8])}" if item.lineup.champions else ""
         notes = f" | 备注: {'; '.join(item.lineup.notes)}" if item.lineup.notes else ""
-        lines.append(f"{index}. [{item.lineup.tier}] {item.lineup.name}  分数 {item.score}{matched}{notes}")
+        lines.append(f"{index}. [{item.lineup.tier}] {item.lineup.name}  分数 {item.score}{matched}{champions}{notes}")
     return "\n".join(lines)
 
 
@@ -1606,7 +1607,8 @@ class JkcheeseGui:
             lines = ["S/S- 阵容推荐"]
             for index, item in enumerate(recommendations, start=1):
                 notes = f" | 备注: {'; '.join(item.lineup.notes)}" if item.lineup.notes else ""
-                lines.append(f"{index}. {item.lineup.name}{notes}")
+                champions = f" | 英雄: {', '.join(item.lineup.champions[:8])}" if item.lineup.champions else ""
+                lines.append(f"{index}. {item.lineup.name}{champions}{notes}")
             self.root.after(0, lambda: self.last_lineups_var.set(summary))
             self._queue_panel("lineups", "\n".join(lines))
             return "S/S- 阵容已刷新。"
