@@ -281,6 +281,12 @@ def should_reset_stale_highlight_offset(offset_x: int, offset_y: int) -> bool:
     return abs(offset_x) >= 400 or abs(offset_y) >= 250
 
 
+def highlight_overlay_click_through_enabled(*, calibration_visible: bool = False) -> bool:
+    # Match the reference helper: the highlight layer is visual-only and never
+    # takes mouse input, including while a calibration preview is visible.
+    return True
+
+
 def _shorten(text: str, limit: int) -> str:
     normalized = " ".join(str(text).split())
     if len(normalized) <= limit:
@@ -351,18 +357,39 @@ def _set_window_click_through(window: tk.Toplevel, enabled: bool) -> None:
         return
     user32 = ctypes.WinDLL("user32", use_last_error=True)
     hwnd = wintypes.HWND(window.winfo_id())
+    get_ancestor = user32.GetAncestor
+    get_ancestor.argtypes = (wintypes.HWND, ctypes.c_uint)
+    get_ancestor.restype = wintypes.HWND
+    top_hwnd = get_ancestor(hwnd, 2)
+    if top_hwnd:
+        hwnd = wintypes.HWND(top_hwnd)
     get_long = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
     set_long = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
+    set_window_pos = user32.SetWindowPos
     get_long.argtypes = (wintypes.HWND, ctypes.c_int)
     get_long.restype = ctypes.c_ssize_t
     set_long.argtypes = (wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t)
     set_long.restype = ctypes.c_ssize_t
+    set_window_pos.argtypes = (
+        wintypes.HWND,
+        wintypes.HWND,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_uint,
+    )
+    set_window_pos.restype = wintypes.BOOL
 
     gwl_exstyle = -20
     ws_ex_transparent = 0x00000020
     ws_ex_layered = 0x00080000
     ws_ex_toolwindow = 0x00000080
     ws_ex_noactivate = 0x08000000
+    swp_no_move = 0x0002
+    swp_no_size = 0x0001
+    swp_no_zorder = 0x0004
+    swp_frame_changed = 0x0020
     style = get_long(hwnd, gwl_exstyle)
     style |= ws_ex_layered | ws_ex_toolwindow
     if enabled:
@@ -371,6 +398,15 @@ def _set_window_click_through(window: tk.Toplevel, enabled: bool) -> None:
         style &= ~ws_ex_transparent
         style &= ~ws_ex_noactivate
     set_long(hwnd, gwl_exstyle, style)
+    set_window_pos(
+        hwnd,
+        wintypes.HWND(0),
+        0,
+        0,
+        0,
+        0,
+        swp_no_move | swp_no_size | swp_no_zorder | swp_frame_changed,
+    )
 
 
 def _make_window_click_through(window: tk.Toplevel) -> None:
@@ -657,6 +693,8 @@ class JkcheeseGui:
         label.bind("<ButtonRelease-1>", self._finish_overlay_drag)
 
         self._overlay = overlay
+        overlay.update_idletasks()
+        _set_window_click_through(overlay, True)
         self._on_overlay_toggled()
 
     def _build_shop_highlight_overlay(self) -> None:
@@ -685,7 +723,7 @@ class JkcheeseGui:
         self._highlight_overlay = overlay
         self._highlight_canvas = canvas
         overlay.update_idletasks()
-        _set_window_click_through(overlay, not self.highlight_drag_var.get())
+        _set_window_click_through(overlay, highlight_overlay_click_through_enabled())
 
     def _default_overlay_geometry(self) -> str:
         return overlay_geometry_for_position(
@@ -717,32 +755,13 @@ class JkcheeseGui:
         self._save_config()
 
     def _start_highlight_drag(self, event) -> None:
-        if not self.highlight_drag_var.get():
-            return
-        self._highlight_drag = (event.x_root, event.y_root)
+        return
 
     def _drag_highlight(self, event) -> None:
-        if not self.highlight_drag_var.get() or self._highlight_overlay is None or self._highlight_drag is None:
-            return
-        old_x, old_y = self._highlight_drag
-        delta_x = event.x_root - old_x
-        delta_y = event.y_root - old_y
-        x = self._highlight_overlay.winfo_x() + delta_x
-        y = self._highlight_overlay.winfo_y() + delta_y
-        width = self._highlight_overlay.winfo_width()
-        height = self._highlight_overlay.winfo_height()
-        self._highlight_overlay.geometry(f"{width}x{height}+{x}+{y}")
-        if self._highlight_auto_rect is not None:
-            offset_x, offset_y = highlight_offset_for_position(x, y, self._highlight_auto_rect)
-            self.highlight_offset_x_var.set(offset_x)
-            self.highlight_offset_y_var.set(offset_y)
-        self._highlight_drag = (event.x_root, event.y_root)
+        return
 
     def _finish_highlight_drag(self, _event=None) -> None:
-        if self._highlight_drag is None:
-            return
         self._highlight_drag = None
-        self._save_config()
 
     def _draw_shop_highlights(self, alerts, source_size: tuple[int, int], *, force_calibration: bool = False) -> None:
         if self._highlight_overlay is None or self._highlight_canvas is None:
@@ -822,7 +841,7 @@ class JkcheeseGui:
         # 启动高亮呼吸动画
         self._start_highlight_animation()
 
-        if self.highlight_drag_var.get() or force_calibration:
+        if force_calibration:
             canvas.create_rectangle(8, 8, 232, 36, fill="#17362f", outline="#ffd60a", width=2)
             canvas.create_text(
                 18,
@@ -836,7 +855,10 @@ class JkcheeseGui:
         overlay.deiconify()
         overlay.lift()
         overlay.attributes("-topmost", True)
-        _set_window_click_through(overlay, not self.highlight_drag_var.get())
+        _set_window_click_through(
+            overlay,
+            highlight_overlay_click_through_enabled(calibration_visible=self._highlight_calibration_visible),
+        )
 
     def _hide_shop_highlights(self) -> None:
         self._stop_highlight_animation()
@@ -882,8 +904,8 @@ class JkcheeseGui:
         self._highlight_anim_job = self.root.after(50, self._highlight_anim_tick)
 
     def show_highlight_calibration(self) -> None:
-        self.highlight_drag_var.set(True)
-        self._on_highlight_drag_toggled()
+        self.highlight_drag_var.set(False)
+        self._highlight_drag = None
         self._draw_shop_highlights((), default_preset().base_size, force_calibration=True)
 
     def reset_overlay_position(self) -> None:
@@ -899,6 +921,7 @@ class JkcheeseGui:
                 self._overlay.deiconify()
                 self._overlay.lift()
                 self._overlay.attributes("-topmost", True)
+                _set_window_click_through(self._overlay, True)
         if self._highlight_overlay is not None and self._highlight_auto_rect is not None:
             self._highlight_overlay.geometry(
                 f"{self._highlight_auto_rect.width}x{self._highlight_auto_rect.height}"
@@ -912,15 +935,17 @@ class JkcheeseGui:
         if self.overlay_enabled_var.get():
             self._overlay.deiconify()
             self._overlay.attributes("-topmost", True)
+            _set_window_click_through(self._overlay, True)
         else:
             self._overlay.withdraw()
             self._hide_shop_highlights()
         self._save_config()
 
     def _on_highlight_drag_toggled(self) -> None:
-        enabled = self.highlight_drag_var.get()
+        self.highlight_drag_var.set(False)
+        enabled = False
         if self._highlight_overlay is not None:
-            _set_window_click_through(self._highlight_overlay, not enabled)
+            _set_window_click_through(self._highlight_overlay, highlight_overlay_click_through_enabled())
         if enabled:
             self.auto_scan_status_var.set("高亮框校准：可自由拖动，调完请取消勾选")
             self._draw_shop_highlights((), default_preset().base_size, force_calibration=True)
@@ -1020,6 +1045,7 @@ class JkcheeseGui:
             text="自由拖高亮框",
             variable=self.highlight_drag_var,
             command=self._on_highlight_drag_toggled,
+            state="disabled",
         )
         self.highlight_preview_button = ttk.Button(auto_bar, text="显示校准框", command=self.show_highlight_calibration)
         self.overlay_reset_button = ttk.Button(auto_bar, text="重置位置", command=self.reset_overlay_position)
@@ -1241,11 +1267,11 @@ class JkcheeseGui:
             self.auto_scan_check,
             self.overlay_check,
             self.overlay_reset_button,
-            self.highlight_drag_check,
             self.highlight_preview_button,
             self.auto_buy_check,
         ):
             button.configure(state=state)
+        self.highlight_drag_check.configure(state="disabled")
         self.auto_buy_check.configure(state="disabled")
 
     def _set_panel(self, key: str, message: str) -> None:

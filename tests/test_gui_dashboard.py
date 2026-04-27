@@ -14,6 +14,7 @@ from jkcheese.gui import (
     format_buy_hint_status,
     format_overlay_summary,
     format_reading_summary,
+    highlight_overlay_click_through_enabled,
     highlight_offset_for_position,
     map_capture_box_to_screen,
     overlay_geometry_for_position,
@@ -126,6 +127,11 @@ def test_legacy_overlay_position_migration_preserves_user_left_position():
 def test_stale_highlight_offset_migration_resets_large_drag_offsets():
     assert should_reset_stale_highlight_offset(-494, 277) is True
     assert should_reset_stale_highlight_offset(24, -18) is False
+
+
+def test_highlight_overlay_is_always_mouse_click_through():
+    assert highlight_overlay_click_through_enabled() is True
+    assert highlight_overlay_click_through_enabled(calibration_visible=True) is True
 
 
 def test_buy_hint_status_is_read_only_and_filters_severity():

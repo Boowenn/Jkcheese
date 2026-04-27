@@ -26,6 +26,7 @@ Current module scope:
 - suggest when to level, save, small-D, or all-in from stage, level, gold, and HP
 - provide a Chinese dashboard EXE with left-side screenshot status and right-side recommendation panels
 - migrate old saved overlay/highlight positions so the floating hint returns to the top-left and stale calibration windows do not block clicks
+- keep overlay and shop-highlight windows mouse-click-through like the reference helper, so they cannot trap game input
 - run LDPlayer and ADB screenshot commands without popping console windows
 - build a one-file EXE with PyInstaller
 - run unit tests
