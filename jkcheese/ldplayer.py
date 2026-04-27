@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import locale
+import os
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -61,6 +62,26 @@ def decode_bytes(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+def _silent_subprocess_kwargs() -> dict[str, object]:
+    if os.name != "nt":
+        return {}
+
+    kwargs: dict[str, object] = {}
+    create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if create_no_window:
+        kwargs["creationflags"] = create_no_window
+
+    startup_info_type = getattr(subprocess, "STARTUPINFO", None)
+    startf_use_show_window = getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+    if startup_info_type is not None and startf_use_show_window:
+        startupinfo = startup_info_type()
+        startupinfo.dwFlags |= startf_use_show_window
+        startupinfo.wShowWindow = 0
+        kwargs["startupinfo"] = startupinfo
+
+    return kwargs
+
+
 def _read_appsinfo(path: Path) -> list[InstalledApp]:
     if not path.exists():
         return []
@@ -101,6 +122,7 @@ class LDPlayerClient:
             stderr=subprocess.PIPE,
             timeout=timeout,
             check=False,
+            **_silent_subprocess_kwargs(),
         )
         stdout = decode_bytes(result.stdout).strip()
         stderr = decode_bytes(result.stderr).strip()
@@ -123,6 +145,7 @@ class LDPlayerClient:
             stderr=subprocess.PIPE,
             timeout=timeout,
             check=False,
+            **_silent_subprocess_kwargs(),
         )
         if check and result.returncode != 0:
             detail = decode_bytes(result.stderr).strip() or decode_bytes(result.stdout).strip()

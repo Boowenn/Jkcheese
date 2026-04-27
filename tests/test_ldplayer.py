@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from jkcheese.ldplayer import LDPlayerClient, LDPlayerError, decode_bytes
+from jkcheese.ldplayer import LDPlayerClient, LDPlayerError, _silent_subprocess_kwargs, decode_bytes
 
 
 def make_root(tmp_path: Path) -> Path:
@@ -19,6 +19,15 @@ def make_root(tmp_path: Path) -> Path:
 
 def test_decode_bytes_understands_gb18030():
     assert decode_bytes("金铲铲之战".encode("gb18030")) == "金铲铲之战"
+
+
+def test_windows_subprocesses_run_without_console_windows():
+    kwargs = _silent_subprocess_kwargs()
+    if hasattr(subprocess, "CREATE_NO_WINDOW"):
+        assert kwargs["creationflags"] == subprocess.CREATE_NO_WINDOW
+        assert "startupinfo" in kwargs
+    else:
+        assert kwargs == {}
 
 
 def test_list_instances_parses_installed_game(tmp_path, monkeypatch):
