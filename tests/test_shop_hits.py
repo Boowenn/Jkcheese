@@ -22,7 +22,7 @@ def test_shop_hit_alerts_flag_direct_three_star_purchase():
 
 
 def test_shop_hit_alerts_include_s_lineup_context():
-    report = _report(ShopSlotReading(slot=1, occupied=True, name="娜美", cost=5, confidence=0.8, source="name-ocr"))
+    report = _report(ShopSlotReading(slot=1, occupied=True, name="娜美", cost=5, confidence=0.95, source="template"))
     state = CardTrackerState()
     lineups = (Lineup(name="律动娜美", tier="S"),)
 
@@ -30,6 +30,26 @@ def test_shop_hit_alerts_include_s_lineup_context():
 
     assert alerts[0].severity == "medium"
     assert alerts[0].matched_lineups == ("律动娜美",)
+
+
+def test_shop_hit_alerts_ignore_name_ocr_guesses():
+    report = _report(ShopSlotReading(slot=1, occupied=True, name="Nami", cost=1, confidence=0.99, source="name-ocr"))
+    state = CardTrackerState(counts={"Nami": 8}, costs={"Nami": 1})
+
+    alerts = build_shop_hit_alerts(report, state)
+
+    assert alerts == ()
+
+
+def test_shop_hit_alerts_match_lineup_code_champions():
+    report = _report(ShopSlotReading(slot=2, occupied=True, name="Nami", cost=1, confidence=0.95, source="template"))
+    state = CardTrackerState()
+    lineups = (Lineup(name="Code lineup", tier="S", champions=("Nami",)),)
+
+    alerts = build_shop_hit_alerts(report, state, lineups=lineups)
+
+    assert len(alerts) == 1
+    assert alerts[0].matched_lineups == ("Code lineup",)
 
 
 def _report(*slots: ShopSlotReading) -> ShopScanReport:

@@ -14,6 +14,7 @@ from jkcheese.gui import (
     format_buy_hint_status,
     format_overlay_summary,
     format_reading_summary,
+    highlight_draw_rect,
     highlight_overlay_click_through_enabled,
     highlight_offset_for_position,
     map_capture_box_to_screen,
@@ -85,6 +86,10 @@ def test_map_capture_box_to_screen_scales_to_window_client_rect():
     )
 
     assert mapped == (480, 270, 720, 405)
+
+
+def test_highlight_draw_rect_uses_exact_slot_edges():
+    assert highlight_draw_rect((496, 878, 718, 1064)) == (496, 878, 718, 1064)
 
 
 def test_choose_highlight_target_rect_applies_saved_offset():

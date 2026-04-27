@@ -227,6 +227,11 @@ def map_capture_box_to_screen(
     )
 
 
+def highlight_draw_rect(box: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    left, top, right, bottom = box
+    return (left, top, right, bottom)
+
+
 def choose_highlight_target_rect(
     auto_rect: ScreenRect | None,
     *,
@@ -806,11 +811,12 @@ class JkcheeseGui:
             left, top, right, bottom = map_capture_box_to_screen(highlight.box, source_size, rect)
             color = HIGHLIGHT_COLORS.get(highlight.severity, "#ffd60a")
             line_width = 6 if highlight.severity in {"critical", "high"} else 4
+            draw_left, draw_top, draw_right, draw_bottom = highlight_draw_rect((left, top, right, bottom))
             rect_id = canvas.create_rectangle(
-                left + 4,
-                top + 4,
-                right - 4,
-                bottom - 4,
+                draw_left,
+                draw_top,
+                draw_right,
+                draw_bottom,
                 outline=color,
                 width=line_width,
                 tags=("glow",),
@@ -1703,10 +1709,11 @@ class JkcheeseGui:
             hp=_reading_value(readings, "player_hp"),
         )
         lineups = fetch_jcc_s_lineups()
+        trusted_shop_names = shop_report.trusted_names
         core_report = build_core_advice(
             state_path=capture_dir / "card_state.json",
             lineups=lineups,
-            seen=(*shop_report.recognized_names, self.live_tokens_var.get()),
+            seen=(*trusted_shop_names, self.live_tokens_var.get()),
             owned=self.owned_cards_var.get(),
             mode="add",
             limit=5,
@@ -1715,7 +1722,7 @@ class JkcheeseGui:
         item_report = build_item_advice(
             core_report.recommendations,
             state=core_report.state,
-            shop_names=shop_report.recognized_names,
+            shop_names=trusted_shop_names,
             seen_tokens=core_report.seen_tokens,
             item_components=self.item_components_var.get(),
             limit=3,
@@ -1733,7 +1740,7 @@ class JkcheeseGui:
             chase_output = "四费/五费追三概率:\n- 等级或金币没读稳，先等下一次自动识别。"
 
         reading_summary = format_reading_summary(readings)
-        shop_summary = ", ".join(shop_report.recognized_names) if shop_report.recognized_names else "未识别到商店牌名"
+        shop_summary = ", ".join(trusted_shop_names) if trusted_shop_names else "未确认商店牌名"
         lineup_summary = "; ".join(item.lineup.name for item in core_report.recommendations[:3]) or "-"
         hit_summary = "; ".join(f"槽位{alert.slot} {alert.name}" for alert in hit_alerts[:3]) or shop_summary
         item_summary = "; ".join(f"{plan.lineup_name}: {plan.main_carry}" for plan in item_report.plans[:2]) or "-"
@@ -1761,7 +1768,7 @@ class JkcheeseGui:
         stage = _reading_text(readings, "stage").strip()
         buy_hint_update: BuyHintUpdate | None = None
         if hit_alerts and MATCH_STAGE_RE.match(stage):
-            buy_hint_update = self._update_buy_hints(hit_alerts, tuple(shop_report.recognized_names))
+            buy_hint_update = self._update_buy_hints(hit_alerts, tuple(trusted_shop_names))
         elif not MATCH_STAGE_RE.match(stage):
             self._clear_buy_hints()
 

@@ -21,8 +21,9 @@ SIGNATURE_SIZE = (16, 16)
 NAME_SIGNATURE_SIZE = (96, 32)
 OCCUPIED_STDDEV_THRESHOLD = 14.0
 DEFAULT_TEMPLATE_THRESHOLD = 0.92
-DEFAULT_NAME_OCR_THRESHOLD = 0.63
-DEFAULT_NAME_OCR_MARGIN = 0.015
+DEFAULT_NAME_OCR_THRESHOLD = 0.72
+DEFAULT_NAME_OCR_MARGIN = 0.045
+TRUSTED_SHOP_NAME_SOURCES = frozenset({"template"})
 LABEL_RE = re.compile(r"^(?P<slot>[1-5])\s*[=:]\s*(?P<name>[^:@=]+?)(?:\s*[:@]\s*(?P<cost>[1-5]))?$")
 
 DEFAULT_CHAMPION_NAMES = (
@@ -167,6 +168,23 @@ class ShopScanReport:
             if slot.name and slot.name not in names:
                 names.append(slot.name)
         return tuple(names)
+
+    @property
+    def trusted_names(self) -> tuple[str, ...]:
+        names: list[str] = []
+        for slot in self.slots:
+            if is_trusted_shop_name(slot) and slot.name not in names:
+                names.append(slot.name)
+        return tuple(names)
+
+
+def is_trusted_shop_name(reading: ShopSlotReading) -> bool:
+    return (
+        reading.occupied
+        and bool(reading.name)
+        and reading.source in TRUSTED_SHOP_NAME_SOURCES
+        and reading.confidence >= DEFAULT_TEMPLATE_THRESHOLD
+    )
 
 
 def scan_shop(

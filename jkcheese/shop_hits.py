@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from .card_tracker import CardTrackerState, DEFAULT_FOCUS_COSTS, DEFAULT_POOL_SIZES
 from .lineups import Lineup
-from .shop_recognition import ShopScanReport, ShopSlotReading
+from .shop_recognition import ShopScanReport, ShopSlotReading, is_trusted_shop_name
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +31,7 @@ def build_shop_hit_alerts(
     resolved_pool_sizes = _normalize_pool_sizes(pool_sizes)
     alerts: list[ShopHitAlert] = []
     for reading in report.slots:
-        if not reading.occupied or not reading.name:
+        if not is_trusted_shop_name(reading):
             continue
         alert = _alert_for_reading(
             reading,
@@ -181,7 +181,7 @@ def _matching_lineups(name: str, lineups: tuple[Lineup, ...]) -> tuple[str, ...]
     needle = name.casefold()
     matches: list[str] = []
     for lineup in lineups:
-        haystack = " ".join((lineup.name, lineup.code_title, lineup.code, *lineup.notes)).casefold()
+        haystack = " ".join((lineup.name, lineup.code_title, lineup.code, *lineup.notes, *lineup.champions)).casefold()
         if needle and needle in haystack:
             matches.append(lineup.name)
     return tuple(matches[:3])

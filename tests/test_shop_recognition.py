@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw, ImageFont
 from jkcheese.regions import default_preset
 from jkcheese.shop_recognition import (
     format_shop_scan,
+    is_trusted_shop_name,
     label_shop_templates,
     load_champion_names,
     parse_shop_labels,
@@ -53,14 +54,21 @@ def test_shop_template_label_enables_name_recognition(tmp_path):
     assert "丽桑卓" in format_shop_scan(report)
 
 
-def test_shop_name_ocr_recognizes_default_chinese_candidate(tmp_path):
+def test_shop_name_ocr_recognizes_candidate_but_does_not_trust_it(tmp_path):
     screen = tmp_path / "screen.png"
     _make_shop_screen(screen, occupied_slots={2: ("潘森", 2)})
 
-    report = scan_shop(screen, templates_path=tmp_path / "templates.json", champions_path=tmp_path / "missing.json")
+    report = scan_shop(
+        screen,
+        templates_path=tmp_path / "templates.json",
+        champions_path=tmp_path / "missing.json",
+        name_ocr_threshold=0.6,
+    )
 
     assert report.slots[1].name == "潘森"
     assert report.slots[1].source == "name-ocr"
+    assert report.trusted_names == ()
+    assert is_trusted_shop_name(report.slots[1]) is False
     assert "Name OCR candidates" in format_shop_scan(report)
 
 
