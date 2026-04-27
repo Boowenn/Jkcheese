@@ -51,6 +51,10 @@ class AppConfig:
     auto_buy_min_severity: str = "medium"
     auto_buy_delay_ms: int = 300
 
+    def __post_init__(self) -> None:
+        self.highlight_drag_enabled = False
+        self.auto_buy_enabled = False
+
     @classmethod
     def load(cls) -> "AppConfig":
         path = _config_dir() / "config.json"
@@ -85,13 +89,14 @@ class AppConfig:
         config.overlay_enabled = _safe_bool(payload.get("overlay_enabled"), config.overlay_enabled)
         config.overlay_x = _safe_optional_int(payload.get("overlay_x"), config.overlay_x)
         config.overlay_y = _safe_optional_int(payload.get("overlay_y"), config.overlay_y)
-        config.highlight_drag_enabled = _safe_bool(
-            payload.get("highlight_drag_enabled"),
-            config.highlight_drag_enabled,
-        )
+        # Calibration drag mode must be session-only; persisting it can make the
+        # highlight overlay intercept clicks on the next launch.
+        config.highlight_drag_enabled = False
         config.highlight_offset_x = _safe_int(payload.get("highlight_offset_x"), config.highlight_offset_x, minimum=-5000)
         config.highlight_offset_y = _safe_int(payload.get("highlight_offset_y"), config.highlight_offset_y, minimum=-5000)
-        config.auto_buy_enabled = _safe_bool(payload.get("auto_buy_enabled"), config.auto_buy_enabled)
+        # Auto-buy is deprecated. Keep the field for old config files, but always
+        # migrate it off so the helper remains read-only after upgrades.
+        config.auto_buy_enabled = False
         config.auto_buy_min_severity = str(payload.get("auto_buy_min_severity", config.auto_buy_min_severity))
         if config.auto_buy_min_severity not in {"critical", "high", "medium", "info"}:
             config.auto_buy_min_severity = "medium"

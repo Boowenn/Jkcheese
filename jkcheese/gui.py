@@ -48,6 +48,9 @@ HIGHLIGHT_COLORS = {
     "info": "#30d5c8",
     "skip": "#9aa0a6",
 }
+SEVERITY_PRIORITY = {"critical": 0, "high": 1, "medium": 2, "info": 3}
+BUY_HINT_DISABLED_STATUS = "拿牌提醒：只读模式，不自动点击"
+BUY_HINT_WAITING_STATUS = "拿牌提醒：等待命中"
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +131,34 @@ def build_calibration_highlights(source_size: tuple[int, int]) -> tuple[ShopHigh
             )
         )
     return tuple(highlights)
+
+
+def buy_hint_signature(alerts, min_severity: str = "medium") -> tuple[tuple[int, str, str], ...]:
+    min_priority = SEVERITY_PRIORITY.get(min_severity, SEVERITY_PRIORITY["medium"])
+    hints: list[tuple[int, str, str]] = []
+    sorted_alerts = sorted(alerts, key=lambda alert: SEVERITY_PRIORITY.get(alert.severity, 99))
+    for alert in sorted_alerts:
+        if alert.severity == "skip":
+            continue
+        priority = SEVERITY_PRIORITY.get(alert.severity, 99)
+        if priority > min_priority:
+            continue
+        try:
+            slot = int(alert.slot)
+        except (TypeError, ValueError):
+            continue
+        if slot not in range(1, 6):
+            continue
+        hints.append((slot, str(alert.name), str(alert.severity)))
+    return tuple(hints)
+
+
+def format_buy_hint_status(alerts, min_severity: str = "medium") -> str:
+    hints = buy_hint_signature(alerts, min_severity)
+    if not hints:
+        return BUY_HINT_WAITING_STATUS
+    summary = ", ".join(f"槽{slot} {name}" for slot, name, _severity in hints[:3])
+    return f"拿牌提醒：{summary}"
 
 
 def map_capture_box_to_screen(
@@ -372,8 +403,8 @@ class JkcheeseGui:
         self.item_components_var = tk.StringVar(value="")
         self.highlight_offset_x_var = tk.IntVar(value=self.config.highlight_offset_x)
         self.highlight_offset_y_var = tk.IntVar(value=self.config.highlight_offset_y)
-        self.auto_buy_var = tk.BooleanVar(value=self.config.auto_buy_enabled)
-        self.auto_buy_status_var = tk.StringVar(value="自动拿牌：已关闭")
+        self.auto_buy_var = tk.BooleanVar(value=False)
+        self.auto_buy_status_var = tk.StringVar(value=BUY_HINT_DISABLED_STATUS)
         self.stage_value_var = tk.StringVar(value="?")
         self.level_value_var = tk.StringVar(value="?")
         self.gold_value_var = tk.StringVar(value="?")
@@ -394,7 +425,7 @@ class JkcheeseGui:
         self._highlight_anim_phase: float = 0.0
         self._highlight_anim_job: str | None = None
         self._highlight_items: list[tuple] = []  # (slot_rect_ids, severity, left, top, right, bottom)
-        self._last_auto_buy_slots: set[int] = set()  # 上次自动拿牌已购买的槽位，防止重复点击
+        self._last_buy_hint_signature: tuple[tuple[int, str, str], ...] = ()
         self._panels: dict[str, tk.Text] = {}
 
         self._build_ui()
@@ -796,8 +827,8 @@ class JkcheeseGui:
         self._save_config()
 
     def _on_auto_buy_toggled(self) -> None:
-        enabled = self.auto_buy_var.get()
-        self.auto_buy_status_var.set("自动拿牌：已开启" if enabled else "自动拿牌：已关闭")
+        self.auto_buy_var.set(False)
+        self.auto_buy_status_var.set(BUY_HINT_DISABLED_STATUS)
         self._save_config()
 
     def _configure_styles(self) -> None:
@@ -884,9 +915,10 @@ class JkcheeseGui:
         self.overlay_reset_button = ttk.Button(auto_bar, text="重置位置", command=self.reset_overlay_position)
         self.auto_buy_check = ttk.Checkbutton(
             auto_bar,
-            text="自动拿牌",
+            text="只读拿牌提醒",
             variable=self.auto_buy_var,
             command=self._on_auto_buy_toggled,
+            state="disabled",
         )
         self.auto_scan_check.grid(row=0, column=0, sticky="w")
         self.overlay_check.grid(row=0, column=1, sticky="w")
@@ -1061,10 +1093,10 @@ class JkcheeseGui:
         self.config.capture_dir = self.capture_dir_var.get().strip()
         self.config.auto_scan_enabled = self.auto_scan_var.get()
         self.config.overlay_enabled = self.overlay_enabled_var.get()
-        self.config.highlight_drag_enabled = self.highlight_drag_var.get()
+        self.config.highlight_drag_enabled = False
         self.config.highlight_offset_x = int(self.highlight_offset_x_var.get())
         self.config.highlight_offset_y = int(self.highlight_offset_y_var.get())
-        self.config.auto_buy_enabled = self.auto_buy_var.get()
+        self.config.auto_buy_enabled = False
         self.config.save()
 
     def _current_index(self) -> int:
@@ -1104,6 +1136,7 @@ class JkcheeseGui:
             self.auto_buy_check,
         ):
             button.configure(state=state)
+        self.auto_buy_check.configure(state="disabled")
 
     def _set_panel(self, key: str, message: str) -> None:
         panel = self._panels[key]
@@ -1194,7 +1227,7 @@ class JkcheeseGui:
     def _cleanup_finished_match(self, capture_dir: Path) -> str:
         report = cleanup_capture_dir(capture_dir, max_sessions=0, max_age_days=0)
         reset_card_state(capture_dir / "card_state.json")
-        self._last_auto_buy_slots = set()
+        self._last_buy_hint_signature = ()
         message = f"检测到对局结束，已清理本局截图 {report.deleted_count} 个，并重置本局棋子计数。"
         self.root.after(0, lambda: self.cleanup_status_var.set(message))
         self.root.after(0, lambda: self.auto_shop_var.set("商店：等待下一局"))
@@ -1586,12 +1619,12 @@ class JkcheeseGui:
         self.root.after(0, lambda: self.overlay_text_var.set(overlay_summary))
         self.root.after(0, lambda: self._draw_shop_highlights(hit_alerts, source_size))
 
-        # 自动拿牌：仅在对局中（阶段格式为 X-Y）且检测到目标卡牌时才自动点击
+        # Read-only buy guidance: update hints only, never send input to the emulator.
         stage = _reading_text(readings, "stage").strip()
-        if self.auto_buy_var.get() and hit_alerts and MATCH_STAGE_RE.match(stage):
-            self._auto_buy_cards(client, hit_alerts, source_size)
+        if hit_alerts and MATCH_STAGE_RE.match(stage):
+            self._update_buy_hints(hit_alerts)
         elif not MATCH_STAGE_RE.match(stage):
-            self._last_auto_buy_slots = set()  # 不在对局中，清空去重缓存
+            self._clear_buy_hints()
 
         self._queue_panel(
             "current",
@@ -1620,54 +1653,18 @@ class JkcheeseGui:
             self._cleanup_old_captures(capture_dir)
         return "自动识别已更新。" if auto else "一键扫描完成。"
 
-    def _auto_buy_cards(self, client: "LDPlayerClient", alerts, source_size: tuple[int, int]) -> None:
-        """根据 shop_hit_alerts 自动点击商店槽位购买卡牌。"""
-        severity_priority = {"critical": 0, "high": 1, "medium": 2, "info": 3}
-        min_severity = self.config.auto_buy_min_severity
-        min_priority = severity_priority.get(min_severity, 2)
-        preset = default_preset()
-        index = self._current_index()
-        delay_sec = self.config.auto_buy_delay_ms / 1000.0
-        bought: list[str] = []
+    def _update_buy_hints(self, alerts) -> None:
+        """Show read-only shop-slot guidance without sending clicks or ADB input."""
+        signature = buy_hint_signature(alerts, self.config.auto_buy_min_severity)
+        status = format_buy_hint_status(alerts, self.config.auto_buy_min_severity)
+        self.root.after(0, lambda: self.auto_buy_status_var.set(status))
+        if signature and signature != self._last_buy_hint_signature:
+            self.root.after(0, lambda s=status: self._log(s))
+        self._last_buy_hint_signature = signature
 
-        # 构建本轮要买的槽位集合，用于和上次对比去重
-        current_slots: set[int] = set()
-        sorted_alerts = sorted(alerts, key=lambda a: severity_priority.get(a.severity, 99))
-
-        for alert in sorted_alerts:
-            if alert.severity == "skip":
-                continue
-            priority = severity_priority.get(alert.severity, 99)
-            if priority > min_priority:
-                continue
-            slot = int(alert.slot)
-            if slot not in range(1, 6):
-                continue
-            current_slots.add(slot)
-
-            # 跳过上轮已经点击过的同一槽位，防止重复购买
-            if slot in self._last_auto_buy_slots:
-                continue
-
-            region = preset.get(f"shop_slot_{slot}")
-            tap_x = region.x + region.width // 2
-            tap_y = region.y + region.height // 2
-            try:
-                client.tap(index, tap_x, tap_y)
-                bought.append(f"槽{slot} {alert.name}")
-                time.sleep(delay_sec)
-            except Exception as exc:
-                self.root.after(0, lambda e=exc, s=slot: self._log(f"自动拿牌点击失败 槽{s}: {e}"))
-
-        # 记录本轮已买槽位，下次扫描如果同样的槽位还在就跳过
-        self._last_auto_buy_slots = current_slots
-
-        if bought:
-            msg = f"自动拿牌：已购买 {', '.join(bought)}"
-            self.root.after(0, lambda: self._log(msg))
-            self.root.after(0, lambda: self.auto_buy_status_var.set(msg))
-        else:
-            self.root.after(0, lambda: self.auto_buy_status_var.set("自动拿牌：本轮无需购买"))
+    def _clear_buy_hints(self) -> None:
+        self._last_buy_hint_signature = ()
+        self.root.after(0, lambda: self.auto_buy_status_var.set(BUY_HINT_WAITING_STATUS))
 
     def scan_shop(self) -> None:
         self._run_task("一键扫描当前局势", lambda: self._scan_current_state(auto=False))

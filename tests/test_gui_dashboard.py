@@ -6,7 +6,9 @@ from jkcheese.gui import (
     ScreenRect,
     build_calibration_highlights,
     build_shop_highlights,
+    buy_hint_signature,
     choose_highlight_target_rect,
+    format_buy_hint_status,
     format_overlay_summary,
     format_reading_summary,
     map_capture_box_to_screen,
@@ -95,3 +97,13 @@ def test_overlay_geometry_restores_saved_free_position():
 
 def test_overlay_geometry_falls_back_to_top_right_when_no_saved_position():
     assert overlay_geometry_for_position(1280, None, None) == "340x150+912+72"
+
+
+def test_buy_hint_status_is_read_only_and_filters_severity():
+    alerts = [
+        SimpleNamespace(slot=2, name="千珏", severity="critical", title="buy"),
+        SimpleNamespace(slot=4, name="卡莎", severity="info", title="watch"),
+    ]
+
+    assert buy_hint_signature(alerts, "medium") == ((2, "千珏", "critical"),)
+    assert format_buy_hint_status(alerts, "medium") == "拿牌提醒：槽2 千珏"

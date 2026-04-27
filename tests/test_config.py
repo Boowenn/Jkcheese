@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from jkcheese.config import AppConfig
@@ -37,6 +38,37 @@ def test_config_roundtrip(tmp_path, monkeypatch):
     assert loaded.overlay_enabled is False
     assert loaded.overlay_x == 321
     assert loaded.overlay_y == 123
-    assert loaded.highlight_drag_enabled is True
+    assert loaded.highlight_drag_enabled is False
     assert loaded.highlight_offset_x == 24
     assert loaded.highlight_offset_y == -18
+    assert loaded.auto_buy_enabled is False
+
+
+def test_legacy_auto_buy_config_is_migrated_off(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    config_path = tmp_path / "Jkcheese" / "config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(json.dumps({"auto_buy_enabled": True}), encoding="utf-8")
+
+    loaded = AppConfig.load()
+
+    assert loaded.auto_buy_enabled is False
+
+
+def test_legacy_highlight_drag_config_is_session_only(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    config_path = tmp_path / "Jkcheese" / "config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(json.dumps({"highlight_drag_enabled": True}), encoding="utf-8")
+
+    loaded = AppConfig.load()
+
+    assert loaded.highlight_drag_enabled is False
+
+
+def test_auto_buy_cannot_be_enabled_by_constructor():
+    assert AppConfig(auto_buy_enabled=True).auto_buy_enabled is False
+
+
+def test_highlight_drag_cannot_be_persisted_by_constructor():
+    assert AppConfig(highlight_drag_enabled=True).highlight_drag_enabled is False

@@ -279,11 +279,11 @@ py -3.14 -m pytest -q
 - freely draggable semi-transparent overlay for live "buy this slot", S lineup, chase risk, and tempo hints without switching away from the game
 - overlay placement is remembered between launches, with an in-GUI reset button if you want to send it back to the default corner
 - click-through shop-slot highlight boxes that frame visible key cards directly over the LDPlayer shop when the window can be located
-- draggable shop highlight calibration mode for misaligned overlays; turn it off after calibration to restore click-through play
+- draggable shop highlight calibration mode for misaligned overlays; it is session-only so the next launch restores click-through play
 - draggable calibration now keeps the saved offset instead of snapping back to the fixed LDPlayer position
 - duplicate EXE launches exit quietly instead of showing a confusing "already running" popup
 - compact small-screen dashboard with a shorter default window, scrollable left column, and tighter right-side panels
-- read-only live alerts only: the helper can tell you which visible slot to buy, but it never clicks, buys, rolls, or controls the game
+- read-only live alerts only: the helper can tell you which visible slot to buy, but it never clicks, buys, rolls, or controls the game; legacy auto-buy settings are migrated off
 - automatic capture cleanup: generated screenshots are retained briefly during a match, and when the match appears to end the tool clears match screenshots and resets match card counts
 - single-instance GUI guard so double-clicking the EXE does not open two helper windows
 
